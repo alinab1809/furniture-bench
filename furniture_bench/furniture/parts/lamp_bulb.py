@@ -37,6 +37,69 @@ class LampBulb(Leg):
             ).float().to(mat.device)
         return max_mat
 
+    def is_inserted(self, rb_states, part_idxs, sim_to_april_mat):
+        # 1. Get poses in the April frame
+        base_pose = C.to_homogeneous(
+            rb_states[part_idxs[0]][:3],
+            C.quat2mat(rb_states[part_idxs[0]][3:7]),
+        )
+        bulb_pose = C.to_homogeneous(
+            rb_states[part_idxs[1]][:3],
+            C.quat2mat(rb_states[part_idxs[1]][3:7]),
+        )
+        # print("fb: ", rb_states[part_idxs[1]][:3])
+        base_pose = sim_to_april_mat @ base_pose
+        bulb_pose = sim_to_april_mat @ bulb_pose
+        # print(bulb_pose[:3, 3])
+        device = base_pose.device
+
+        # 2. Calculate the target hole pose relative to the base
+        # Using your FSM logic: base_pose @ default_assembled_pose
+        target_hole_pose = base_pose @ torch.tensor(
+            self.default_assembled_pose, device=device
+        ).float()
+
+        # 3. Check distance
+        # Insertion usually implies the bulb tip is within 1-2cm of the socket center
+        pos_error = torch.norm(bulb_pose[:3, 3] - target_hole_pose[:3, 3])
+
+        # print("POS ERROR ", pos_error)
+        return pos_error < 0.02, pos_error
+
+    def is_screwed_in(self, rb_states, part_idxs, sim_to_april_mat):
+        # 1. Get April-frame poses
+        base_pose = C.to_homogeneous(
+            rb_states[part_idxs[0]][:3],
+            C.quat2mat(rb_states[part_idxs[0]][3:7]),
+        )
+        bulb_pose = C.to_homogeneous(
+            rb_states[part_idxs[1]][:3],
+            C.quat2mat(rb_states[part_idxs[1]][3:7]),
+        )
+        base_pose = sim_to_april_mat @ base_pose
+        bulb_pose = sim_to_april_mat @ bulb_pose
+        device = base_pose.device
+
+        # 2. Define the ideal assembled pose
+        target_assembled_pose = base_pose @ torch.tensor(
+            self.default_assembled_pose, device=device
+        ).float()
+
+        # 3. Position Error (L2 Norm)
+        pos_error = torch.norm(bulb_pose[:3, 3] - target_assembled_pose[:3, 3])
+
+        # 4. Orientation Error
+        # Since bulbs are symmetric, we mainly care that the Z-axis of the bulb
+        # aligns with the target Z-axis (pointing into the base)
+        bulb_z = bulb_pose[:3, 2]
+        target_z = target_assembled_pose[:3, 2]
+
+        # dot product of 1.0 means perfectly parallel
+        ori_error = 1.0 - torch.abs(torch.dot(bulb_z, target_z))
+
+        # Strict thresholds for assembly completion
+        return pos_error < 0.01 and ori_error < 0.1
+
     def fsm_step(
         self,
         ee_pos,
@@ -258,6 +321,7 @@ class LampBulb(Leg):
             # Dummy transition state for skill complete.
             target = self.prev_pose
             next_state = "pre_grasp"
+            # print(self.is_inserted(rb_states, part_idxs, sim_to_april_mat))
         elif self._state == "release":
             target = self.prev_pose
             self.gripper_action = -1
@@ -288,6 +352,7 @@ class LampBulb(Leg):
             target_pos = (ee_pos)[:3]
             target_pos[2] -= 0.005
             target = C.to_homogeneous(target_pos, target_ori)
+            # print(self.is_screwed_in(rb_states, part_idxs, sim_to_april_mat))
             if self.satisfy(ee_pose, target, ori_error_threshold=0.3):
                 self.prev_pose = target
                 next_state = "release"

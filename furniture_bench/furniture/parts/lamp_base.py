@@ -54,6 +54,51 @@ class LampBase(Part):
         self._state = "reach_body_grasp_xy"
         self.gripper_action = -1
 
+    def is_object_in_corner(self,
+                            rb_states,
+                            part_idxs,
+                            sim_to_april_mat,
+                            april_to_robot,
+                            pos_threshold=0.03,
+                            ori_threshold=0.5,
+                            env_idx=0,
+                            ):
+        # 1. Get current object pose in Robot Frame
+        raw_body_pos = rb_states[part_idxs[self.name]][env_idx][:3]
+        raw_body_quat = rb_states[part_idxs[self.name]][env_idx][3:7]
+        body_pose_sim = C.to_homogeneous(raw_body_pos, C.quat2mat(raw_body_quat))
+        body_pose_robot = april_to_robot @ sim_to_april_mat @ body_pose_sim
+
+        device = body_pose_robot.device
+
+        # 2. Position Check (XY distance in Robot Frame)
+        target_pos_sim = torch.zeros((4,), device=body_pose_sim.device)
+        target_pos_sim[-1] = 1
+        for name in ["obstacle_front", "obstacle_right", "obstacle_left"]:
+            obstacle_pos = rb_states[part_idxs[name]][0][:3]
+            target_pos_sim[0] = max(obstacle_pos[0], target_pos_sim[0])
+            target_pos_sim[1] = max(obstacle_pos[1], target_pos_sim[1])
+
+        target_pos_robot = (april_to_robot @ sim_to_april_mat @ target_pos_sim)[:3]
+        target_pos_robot[0] -= (self.half_length * 2 + 0.02)  # Matching agent margin
+        target_pos_robot[1] -= (self.half_length + 0.02)
+        current_pos = body_pose_robot[:3, 3]
+        pos_error = torch.norm(current_pos[:2] - target_pos_robot[:2])
+
+        target_ori_robot = torch.tensor([
+            [0., 0., -1.],
+            [1., 0., 0.],
+            [0., -1., 0.]
+        ], device=device)
+
+        current_ori = body_pose_robot[:3, :3]
+
+        ori_error = (current_ori - target_ori_robot).abs().sum()
+
+        # print(f"VALUATION >> Pos Error: {pos_error:.4f} | Ori Error: {ori_error:.4f}")
+
+        return pos_error < pos_threshold and ori_error < ori_threshold, pos_error
+
     def pre_assemble(
         self,
         ee_pos,
@@ -153,6 +198,7 @@ class LampBase(Part):
                 self.prev_pose = target
                 self.gripper_action = -1
                 next_state = "release"
+                print("IS IN CORNER ", self.is_object_in_corner(rb_states, part_idxs, sim_to_april_mat, april_to_robot))
         if self._state == "release":
             target = self.prev_pose
             self.gripper_action = -1

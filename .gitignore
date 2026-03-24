@@ -138,3 +138,5 @@ log
 *.avi
 
 checkpoints
+furniture_bench/scripts/sim_record
+*.glb

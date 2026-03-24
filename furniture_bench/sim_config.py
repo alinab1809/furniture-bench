@@ -14,7 +14,7 @@ sim_config["furniture"]["assembled_pos_threshold"] = [0.005, 0.005, 0.005]
 
 
 # Timeout for # environment steps for each furniture model.
-sim_config["scripted_timeout"] = {"one_leg": 600, "cabinet": 1500, "lamp": 1000, "round_table": 1300}
+sim_config["scripted_timeout"] = {"one_leg": 600, "cabinet": 1500, "lamp": 1000, "round_table": 1300, "square_table": 1500, "stool": 1500}
 
 # Simulator options.
 sim_params = gymapi.SimParams()
@@ -26,7 +26,7 @@ sim_params.use_gpu_pipeline = True
 sim_params.physx.solver_type = 1
 sim_params.physx.bounce_threshold_velocity = 0.02
 sim_params.physx.num_position_iterations = 20
-sim_params.physx.num_velocity_iterations = 1
+sim_params.physx.num_velocity_iterations = 4
 sim_params.physx.rest_offset = 0.0
 sim_params.physx.contact_offset = 0.002
 sim_params.physx.friction_offset_threshold = 0.01
@@ -35,14 +35,16 @@ sim_params.physx.use_gpu = True
 
 sim_config["sim_params"] = sim_params
 sim_config["parts"] = {"friction": 0.15}
-sim_config["table"] = {"friction": 0.10}
+sim_config["table"] = {"friction": 0.20}
 sim_config["asset"] = {}
 
 # Parameters for the robot.
 sim_config["robot"].update(
     {
         "kp": [90, 90, 90, 70.0, 60.0, 80.0],  # Default positional gains.
+        # "kp": [90.0, 90.0, 90.0, 100.0, 100.0, 100.0], # needed for stool
         "kv": None,  # Default velocity gains.
+        # "kv": [7.0, 7.0, 7.0, 6.0, 6.0, 6.0],
         "arm_frictions": [
             0.05,
             0.05,

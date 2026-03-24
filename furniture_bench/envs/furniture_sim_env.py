@@ -170,11 +170,12 @@ class FurnitureSimEnv(gym.Env):
         if self.record:
             record_dir = Path("sim_record") / datetime.now().strftime("%Y%m%d-%H%M%S")
             record_dir.mkdir(parents=True, exist_ok=True)
+            print("init: img size ", self.img_size)
             self.video_writer = cv2.VideoWriter(
                 str(record_dir / "video.mp4"),
-                cv2.VideoWriter_fourcc(*"MP4V"),
+                cv2.VideoWriter_fourcc(*"mp4v"),
                 30,
-                (self.img_size[1] * 2, self.img_size[0]),  # Wrist and front cameras.
+                (self.img_size[1] * 3, self.img_size[0]),  # Wrist and front cameras.
             )
 
         if act_rot_repr != "quat" and act_rot_repr != "axis" and act_rot_repr != "rot_6d":
@@ -647,6 +648,36 @@ class FurnitureSimEnv(gym.Env):
     def robot_to_ee_mat(self):
         return torch.tensor(rot_mat([np.pi, 0, 0], hom=True), device=self.device)
 
+    def get_transformed_observations(self, parts_poses_world):
+        """
+        Args:
+            parts_poses_world: (N, 7) tensor/array [x, y, z, qx, qy, qz, qw]
+        """
+        # 1. Extract Position and Rotation from your Sim-to-April Matrix
+        # This matrix should be the one you just verified in the plot
+        M = self.sim_to_april_mat  # Shape (4, 4)
+        R_mat = M[:3, :3]
+        t_vec = M[:3, 3]
+
+        # 2. Transform Positions
+        world_pos = parts_poses_world[:, :3]
+        # x' = R*x + t
+        transformed_pos = (R_mat @ world_pos.T).T + t_vec
+
+        # 3. Transform Orientations (Quaternions)
+        # The orientation must also rotate to stay consistent with the new axes
+        world_quat = parts_poses_world[:, 3:7]
+
+        # Convert matrix R to a quaternion (using a helper like C.mat2quat or scipy)
+        R_quat = self.mat2quat(R_mat)
+
+        # New orientation = R_quat * world_quat
+        # Use your environment's quaternion multiplication utility
+        transformed_quat = self.quat_multiply(R_quat, world_quat)
+
+        # 4. Reconstruct the (N, 7) array
+        return torch.cat([transformed_pos, transformed_quat], dim=-1)
+
     @property
     def action_space(self):
         # Action space to be -1.0 to 1.0.
@@ -931,7 +962,7 @@ class FurnitureSimEnv(gym.Env):
         joint_positions = self.dof_pos[:, :7]
         joint_velocities = self.dof_vel[:, :7]
         joint_torques = self.forces
-        ee_pos, ee_quat = self.get_ee_pose()
+        ee_pos, ee_quat = self.get_ee_pose(world=True)
         for q in ee_quat:
             if q[3] < 0:
                 q *= -1
@@ -995,12 +1026,14 @@ class FurnitureSimEnv(gym.Env):
             )
         self.ctrl_started = True
 
-    def get_ee_pose(self):
+    def get_ee_pose(self, world=False):
         """Gets end-effector pose in world coordinate."""
         hand_pos = self.rb_states[self.ee_idxs, :3]
         hand_quat = self.rb_states[self.ee_idxs, 3:7]
         base_pos = self.rb_states[self.base_idxs, :3]
         base_quat = self.rb_states[self.base_idxs, 3:7]  # Align with world coordinate.
+        if world:
+            return hand_pos, hand_quat
         return hand_pos - base_pos, hand_quat
 
     def gripper_width(self):
@@ -1120,7 +1153,9 @@ class FurnitureSimEnv(gym.Env):
                 obs.update(robot_state)  # Flatten the dict.
         for k in self.obs_keys:
             if k == "parts_poses":
-                parts_poses, _ = self._get_parts_poses()  # Part poses in AprilTag coordinate.
+
+                parts_poses, _ = self._get_parts_poses(sim_coord=True)  # Part poses in AprilTag coordinate.
+                print(parts_poses[:3])
                 if self.np_step_out:
                     parts_poses = parts_poses.cpu().numpy()
                 obs["parts_poses"] = parts_poses
@@ -1422,7 +1457,7 @@ class FurnitureSimEnv(gym.Env):
             Tuple (action for the assembly task, skill complete mask)
         """
         assert self.num_envs == 1  # Only support one environment for now.
-        if self.furniture_name not in ["one_leg", "cabinet", "lamp", "round_table"]:
+        if self.furniture_name not in ["one_leg", "cabinet", "lamp", "round_table", "stool", "square_table"]:
             raise NotImplementedError("[one_leg, cabinet, lamp, round_table] are supported for scripted agent")
 
         if self.assemble_idx > len(self.furniture.should_be_assembled):
@@ -1470,6 +1505,7 @@ class FurnitureSimEnv(gym.Env):
                 1,
             )  # Skill complete is always 1 when assembled.
         if not part1.pre_assemble_done:
+            # print("part 1 pre assembling ", part1)
             goal_pos, goal_ori, gripper, skill_complete = part1.pre_assemble(
                 ee_pos,
                 ee_quat,
@@ -1480,6 +1516,7 @@ class FurnitureSimEnv(gym.Env):
                 self.april_to_robot_mat,
             )
         elif not part2.pre_assemble_done:
+            # print("part 2 pre assembling ", part2)
             goal_pos, goal_ori, gripper, skill_complete = part2.pre_assemble(
                 ee_pos,
                 ee_quat,
@@ -1490,6 +1527,7 @@ class FurnitureSimEnv(gym.Env):
                 self.april_to_robot_mat,
             )
         else:
+            # print("fsm step")
             goal_pos, goal_ori, gripper, skill_complete = self.furniture.parts[
                 part_idx2
             ].fsm_step(

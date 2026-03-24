@@ -107,6 +107,7 @@ def main():
         compute_device_id=args.compute_device_id,
         graphics_device_id=args.graphics_device_id,
     )
+    print("set up env!")
 
     # Initialize FurnitureSim.
     ob = env.reset()

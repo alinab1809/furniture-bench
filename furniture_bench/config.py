@@ -18,7 +18,7 @@ CAM_REAR_SERIAL = os.getenv("CAM_REAR_SERIAL", "")
 config: Dict[str, Any] = {
     "robot": {
         "server_ip": SERVER_IP,
-        "hz": 10,
+        "hz": 20,
         "reset_joints": [
             -0.02630888,
             0.3758795,

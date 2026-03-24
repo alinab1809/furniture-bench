@@ -134,6 +134,31 @@ class DataCollector:
                 break
 
             # An episode is done.
+            if self.step_counter > 400:
+                if self.is_sim:
+                    # Convert it to numpy.
+                    for k, v in next_obs.items():
+                        if isinstance(v, dict):
+                            for k1, v1 in v.items():
+                                v[k1] = v1.squeeze().cpu().numpy()
+                        else:
+                            next_obs[k] = v.squeeze().cpu().numpy()
+
+                self.org_obs.append(next_obs)
+
+                n_ob = {}
+                n_ob["color_image1"] = resize(next_obs["color_image1"])
+                n_ob["color_image2"] = resize_crop(next_obs["color_image2"])
+                ee_pos, ee_quat = self.env.get_ee_pose(world=True)
+                n_ob["robot_state"] = ee_pos.squeeze().cpu().numpy()
+                n_ob["parts_poses"] = next_obs["parts_poses"]
+                self.obs.append(n_ob)
+                c_enum = CollectEnum.SUCCESS
+
+                obs = self.save_and_reset(c_enum, {})
+                self.num_success += 1
+                self.traj_counter += 1
+
             if done or collect_enum in [CollectEnum.SUCCESS, CollectEnum.FAIL]:
                 if self.is_sim:
                     # Convert it to numpy.
@@ -287,10 +312,10 @@ class DataCollector:
             self.color_video_names.append(demo_path / f"{data_name}_{name}.mp4")
 
         # Depth data paths.
-        self.depth_names = ["depth_image1", "depth_image2", "depth_image3"]
-        self.depth_paths = []
-        for name in self.depth_names:
-            self.depth_paths.append(demo_path / f"{data_name}_{name}")
+        # self.depth_names = ["depth_image1", "depth_image2", "depth_image3"]
+        # self.depth_paths = []
+        # for name in self.depth_names:
+        #     self.depth_paths.append(demo_path / f"{data_name}_{name}")
 
         # Save data.
         path = demo_path / f"{data_name}.pkl"
@@ -338,17 +363,17 @@ class DataCollector:
                     outs[i].release()
 
                 # Save raw depth images in png.
-                print("Start saving raw depth images.")
-                for i, k in enumerate(self.depth_names):
-                    self.depth_paths[i].mkdir(parents=True, exist_ok=True)
-                    Parallel(n_jobs=8)(
-                        delayed(cv2.imwrite)(
-                            f"{self.depth_paths[i]}/{j:05}.png",
-                            obs[k],
-                            [int(cv2.IMWRITE_PNG_COMPRESSION), 5],
-                        )
-                        for j, obs in enumerate(self.org_obs)
-                    )
+                # print("Start saving raw depth images.")
+                # for i, k in enumerate(self.depth_names):
+                #     self.depth_paths[i].mkdir(parents=True, exist_ok=True)
+                #     Parallel(n_jobs=8)(
+                #         delayed(cv2.imwrite)(
+                #             f"{self.depth_paths[i]}/{j:05}.png",
+                #             obs[k],
+                #             [int(cv2.IMWRITE_PNG_COMPRESSION), 5],
+                #         )
+                #         for j, obs in enumerate(self.org_obs)
+                #     )
 
             pickle.dump(data, f)
         print(f"Data saved at {path}")

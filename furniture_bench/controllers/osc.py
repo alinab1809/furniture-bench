@@ -132,7 +132,6 @@ def osc_factory(real_robot=True, *args, **kwargs):
 
             # Default desired velocities and accelerations are zero.
             ori_error = C.orientation_error(goal_ori_mat, ee_ori_mat)
-
             # Calculate desired force, torque at ee using control law and error.
             position_error = goal_pos - ee_pos
             vel_pos_error = -ee_pos_vel
@@ -147,7 +146,6 @@ def osc_factory(real_robot=True, *args, **kwargs):
 
             # Calculate Operational Space mass matrix.
             lambda_full, nullspace_matrix = C.opspace_matrices(mass_matrix, jacobian)
-
             desired_wrench = torch.cat([desired_force, desired_torque])
             decoupled_wrench = torch.matmul(lambda_full, desired_wrench)
 

@@ -33,10 +33,11 @@ class Stool(Furniture):
             get_mat([0, 0, 0], [0, 4 * np.pi / 3, 0])
             @ get_mat([0, 0.045, 0.040542], [0, np.pi / 2, 0]),
         ]
-        self.assembled_rel_poses[(0, 2)] = self.assembled_rel_poses[(0, 1)]
-        self.assembled_rel_poses[(0, 3)] = self.assembled_rel_poses[(0, 1)]
+        # self.assembled_rel_poses[(0, 2)] = self.assembled_rel_poses[(0, 1)]
+        # self.assembled_rel_poses[(0, 3)] = self.assembled_rel_poses[(0, 1)]
 
-        self.should_be_assembled = [(0, 1), (0, 2), (0, 3)]
+        # self.should_be_assembled = [(0, 1), (0, 2), (0, 3)]
+        self.should_be_assembled = [(0, 1)]
         self.skill_attach_part_idx = 3
 
     def get_grasp_part_idx(self, from_skill):
