@@ -59,9 +59,9 @@ class LampBase(Part):
                             part_idxs,
                             sim_to_april_mat,
                             april_to_robot,
-                            pos_threshold=0.03,
-                            ori_threshold=0.5,
-                            env_idx=0,
+                            pos_threshold=0.015,
+                            ori_threshold=0.2,
+                            env_idx=0
                             ):
         # 1. Get current object pose in Robot Frame
         raw_body_pos = rb_states[part_idxs[self.name]][env_idx][:3]
@@ -75,13 +75,13 @@ class LampBase(Part):
         target_pos_sim = torch.zeros((4,), device=body_pose_sim.device)
         target_pos_sim[-1] = 1
         for name in ["obstacle_front", "obstacle_right", "obstacle_left"]:
-            obstacle_pos = rb_states[part_idxs[name]][0][:3]
+            obstacle_pos = rb_states[part_idxs[name]][env_idx][:3]
             target_pos_sim[0] = max(obstacle_pos[0], target_pos_sim[0])
             target_pos_sim[1] = max(obstacle_pos[1], target_pos_sim[1])
 
         target_pos_robot = (april_to_robot @ sim_to_april_mat @ target_pos_sim)[:3]
-        target_pos_robot[0] -= (self.half_length * 2 + 0.02)  # Matching agent margin
-        target_pos_robot[1] -= (self.half_length + 0.02)
+        target_pos_robot[0] -= self.half_length * 2
+        target_pos_robot[1] -= self.half_length + 0.01
         current_pos = body_pose_robot[:3, 3]
         pos_error = torch.norm(current_pos[:2] - target_pos_robot[:2])
 
@@ -94,9 +94,6 @@ class LampBase(Part):
         current_ori = body_pose_robot[:3, :3]
 
         ori_error = (current_ori - target_ori_robot).abs().sum()
-
-        # print(f"VALUATION >> Pos Error: {pos_error:.4f} | Ori Error: {ori_error:.4f}")
-
         return pos_error < pos_threshold and ori_error < ori_threshold, pos_error
 
     def pre_assemble(
@@ -180,8 +177,8 @@ class LampBase(Part):
                 target_pos[0] = max(obstacle_pos[0], target_pos[0])
                 target_pos[1] = max(obstacle_pos[1], target_pos[1])
             target_pos = april_to_robot @ sim_to_april_mat @ target_pos
-            target_pos[0] -= self.half_length * 2 + 0.02
-            target_pos[1] -= self.half_length + 0.02  # Margin 2cm
+            target_pos[0] -= self.half_length * 2
+            target_pos[1] -= self.half_length   # Margin 2cm
             target_pos[2] = ee_pose[2, 3]  # Keep z the same.
             target_pos = target_pos[:3]
             target_ori = self.prev_pose[:3, :3]

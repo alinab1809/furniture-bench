@@ -15,7 +15,7 @@ class TableTop(Part):
         super().__init__(part_config, part_idx)
 
         self.gripper_action = -1
-        self.body_grip_width = 0.01
+        self.body_grip_width = 0.002
 
         self.skill_complete_next_states = [
             "push",
@@ -47,6 +47,54 @@ class TableTop(Part):
             if tmp_pose[1, 3] < closest_y[1, 3]:
                 closest_y = tmp_pose
         return closest_y
+
+    def is_object_in_corner(self,
+                            rb_states,
+                            part_idxs,
+                            sim_to_april_mat,
+                            april_to_robot,
+                            pos_threshold=0.02,
+                            ori_threshold=0.4,
+                            env_idx=0
+                            ):
+        # 1. Get current object pose in Robot Frame
+        raw_body_pos = rb_states[part_idxs[self.name]][env_idx][:3]
+        raw_body_quat = rb_states[part_idxs[self.name]][env_idx][3:7]
+        body_pose_sim = C.to_homogeneous(raw_body_pos, C.quat2mat(raw_body_quat))
+        body_pose_robot = april_to_robot @ sim_to_april_mat @ body_pose_sim
+
+        device = body_pose_robot.device
+
+        # 2. Position Check (XY distance in Robot Frame)
+        target_pos_sim = torch.zeros((4,), device=body_pose_sim.device)
+        target_pos_sim[-1] = 1
+        for name in ["obstacle_front", "obstacle_right", "obstacle_left"]:
+            obstacle_pos = rb_states[part_idxs[name]][env_idx][:3]
+            target_pos_sim[0] = max(obstacle_pos[0], target_pos_sim[0])
+            target_pos_sim[1] = max(obstacle_pos[1], target_pos_sim[1])
+
+        target_pos_robot = (april_to_robot @ sim_to_april_mat @ target_pos_sim)[:3]
+        target_pos_robot[0] -= self.half_width + 0.01
+        target_pos_robot[1] -= self.half_width + 0.01
+
+        current_pos = body_pose_robot[:3, 3]
+        pos_error = torch.norm(current_pos[:2] - target_pos_robot[:2])
+
+        target_ori_robot = torch.tensor([
+            [0., 0., -1.],
+            [-1., 0., 0.],
+            [0., 1., 0.]
+        ], device=device)
+
+        current_ori = body_pose_robot[:3, :3]
+
+        ori_error = (current_ori - target_ori_robot).abs().sum()
+
+        # print(f"VALUATION >> Pos Error: {pos_error:.4f} | Ori Error: {ori_error:.4f}")
+        # if pos_error < 0.025:
+        #     print(pos_error, current_pos, target_pos_robot, ori_error)
+        #     print(current_ori)
+        return pos_error < pos_threshold and ori_error < ori_threshold, pos_error
 
     def pre_assemble(
         self,
@@ -106,7 +154,7 @@ class TableTop(Part):
             # if gripper_width <= self.body_grip_width + 0.005:
             #     self.prev_pose = target
             #     next_state = "push"
-            if self.gripper_less(gripper_width, self.body_grip_width):
+            if self.gripper_less(gripper_width, self.body_grip_width, cnt_max=20):
                 self.prev_pose = target
                 next_state = "push"
         if self._state == "push":

@@ -12,13 +12,11 @@ class StoolSeat(Part):
     def __init__(self, part_config, part_idx):
         super().__init__(part_config, part_idx)
 
-        # 1. Physical Constants for Gripping
         self.body_grip_width = 0.01
 
         self.gripper_action = -1
-        self.half_width = 0.0875 / 2
+        self.half_width = 0.044
 
-        # AprilTag offsets (Keep your existing ones)
         self.rel_pose_from_center[self.tag_ids[0]] = get_mat([0, 0, -0.048], [0, 0, 0])
         self.rel_pose_from_center[self.tag_ids[1]] = get_mat([0.048, 0, 0], [0, -np.pi / 2, 0])
         self.rel_pose_from_center[self.tag_ids[2]] = get_mat([0, 0, 0.048], [0, np.pi, 0])
@@ -26,6 +24,7 @@ class StoolSeat(Part):
 
         self.reset_x_len = 0.0875
         self.reset_y_len = 0.0875
+        self.tag_radius = 0.048
 
         self.skill_complete_next_states = ["push", "go_up"]
         self.reset()
@@ -40,36 +39,41 @@ class StoolSeat(Part):
         return pose[2, 1] < -ori_bound
 
     def _find_closest_y(self, pose):
-        """Picks the best side of the stool to grab."""
-        closest_y = pose.clone()
-        for i in range(4):
-            tag_offset = torch.tensor(self.rel_pose_from_center[self.tag_ids[i]],
-                                      device=pose.device).float()
-            tmp_pose = pose @ tag_offset
-            if tmp_pose[1, 3] < closest_y[1, 3]:
-                closest_y = tmp_pose
-        return closest_y
+        """
+        Calculates 4 potential grasp points located BETWEEN the AprilTags
+        to avoid the leg holes.
+        """
+        device = pose.device
+
+        gap_angle = 3 * np.pi / 4
+
+        x = self.tag_radius * np.sin(gap_angle)
+        z = -self.tag_radius * np.cos(gap_angle)
+
+        grasp_offset = torch.tensor(get_mat([x, 0, z], [0, -gap_angle, 0]),
+                                    device=device).float()
+
+        grasp_pose = pose @ grasp_offset
+
+        return grasp_pose
 
     def is_object_in_corner(self,
                             rb_states,
                             part_idxs,
                             sim_to_april_mat,
                             april_to_robot,
-                            pos_threshold=0.03,  # 3cm tolerance
-                            ori_threshold=0.5  # Radian tolerance for orientation
+                            pos_threshold=0.02,  # 2cm tolerance
+                            ori_threshold=0.4  # Radian tolerance for orientation
                             ):
-        # 1. Get the current pose of the object in the sim
-        # rb_states[idx][0] is [x, y, z, qx, qy, qz, qw]
+
         raw_body_pos = rb_states[part_idxs[self.name]][0][:3]
         raw_body_quat = rb_states[part_idxs[self.name]][0][3:7]
 
         body_pose_sim = C.to_homogeneous(raw_body_pos, C.quat2mat(raw_body_quat))
 
-        # 2. Transform body pose to the robot frame (matching your target calculation)
         body_pose_robot = april_to_robot @ sim_to_april_mat @ body_pose_sim
         device = body_pose_robot.device
 
-        # 3. Calculate the Corner Target Position (Logic preserved from your snippet)
         target_pos_sim = torch.zeros((4,), device=device)
         target_pos_sim[-1] = 1
         for name in ["obstacle_front", "obstacle_right", "obstacle_left"]:
@@ -77,34 +81,18 @@ class StoolSeat(Part):
             target_pos_sim[0] = max(obstacle_pos[0], target_pos_sim[0])
             target_pos_sim[1] = max(obstacle_pos[1], target_pos_sim[1])
 
-        # Transform corner point to robot frame
         target_pos_robot = (april_to_robot @ sim_to_april_mat @ target_pos_sim)[:3]
 
-        # Offset by half_width so the edge of the object hits the corner, not the center
-        target_pos_robot[0] -= self.half_width * 2
+        target_pos_robot[0] -= self.half_width * 1.5
         target_pos_robot[1] -= self.half_width
-        # We ignore Z height for a "moved to corner" valuation as long as it's on the table
 
-        # 4. Define the Target Orientation (Standard "flat on table" orientation)
-        # This matches the rotation matrix logic you had:
-        # X points Right, Y points Front, Z points Down (relative to robot)
-        target_ori = torch.tensor([
-            [0., 1., 0.],
-            [1., 0., 0.],
-            [0., 0., -1.]
-        ], device=device)
-
-        # 5. Calculate Errors
         current_pos = body_pose_robot[:3, 3]
-        current_ori = body_pose_robot[:3, :3]
 
         pos_error = torch.norm(current_pos[:2] - target_pos_robot[:2])  # Check X-Y distance
 
-        # Orientation error using trace of rotation matrix difference
-        # (A simple way to see if the rotations align)
-        ori_error = torch.norm(current_ori - target_ori)
-
-        return pos_error < pos_threshold and ori_error < ori_threshold
+        # if pos_error < 0.025:
+        #     print(pos_error, target_pos_robot[:2], current_pos[:2])
+        return pos_error < pos_threshold, pos_error
 
 
     def pre_assemble(
@@ -142,7 +130,7 @@ class StoolSeat(Part):
             target = self.add_noise_first_target(
                 C.to_homogeneous(target_pos, target_ori)
             )
-            if self.satisfy(ee_pose, target):
+            if self.satisfy(ee_pose, target, 0.01):
                 self.prev_pose = target
                 next_state = "reach_body_grasp_z"
         if self._state == "reach_body_grasp_z":
@@ -155,7 +143,7 @@ class StoolSeat(Part):
                     mean=torch.zeros((3,)), std=torch.tensor([0.01, 0.01, 0.001])
                 ).to(device),
             )
-            if self.satisfy(ee_pose, target):
+            if self.satisfy(ee_pose, target, 0.01):
                 self.prev_pose = target
                 self.gripper_action = 1
                 next_state = "pick_body"
@@ -189,10 +177,10 @@ class StoolSeat(Part):
             target_pos[2] = ee_pose[2, 3]  # Keep z the same.
             target_pos = target_pos[:3]
             target_ori = self.prev_pose[:3, :3]
-            target_ori *= 0
-            target_ori[0][1] = 1
-            target_ori[1][0] = 1
-            target_ori[2][2] = -1
+            # target_ori *= 0
+            # target_ori[0][1] = 1
+            # target_ori[1][0] = 1
+            # target_ori[2][2] = -1
 
             target = self.add_noise_first_target(
                 C.to_homogeneous(target_pos, target_ori),
@@ -201,7 +189,7 @@ class StoolSeat(Part):
                 ).to(device),
             )
             if self.satisfy(
-                    ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.5
+                    ee_pose, target, pos_error_threshold=0.01, ori_error_threshold=0.5
             ):
                 self.prev_pose = target
                 self.gripper_action = -1
@@ -211,7 +199,7 @@ class StoolSeat(Part):
             target = self.prev_pose
             self.gripper_action = -1
             if self.gripper_greater(
-                    gripper_width,
+                    0.03,
                     config["robot"]["max_gripper_width"]["square_table"] - 0.001,
             ):
                 next_state = "go_up"
@@ -222,7 +210,7 @@ class StoolSeat(Part):
             target = self.add_noise_first_target(
                 C.to_homogeneous(target_pos, target_ori)
             )
-            if self.satisfy(ee_pose, target):
+            if self.satisfy(ee_pose, target, 0.01):
                 self.prev_pose = target
                 next_state = "done"
         if self._state == "done":

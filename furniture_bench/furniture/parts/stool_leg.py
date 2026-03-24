@@ -145,7 +145,7 @@ class StoolLeg(Leg):
                 C.to_homogeneous(target_pos, target_ori)
             )
             if self.satisfy(
-                ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3
+                ee_pose, target, pos_error_threshold=0.01, ori_error_threshold=0.3
             ):
                 self.prev_pose = target
                 next_state = "move_center"
@@ -156,7 +156,7 @@ class StoolLeg(Leg):
                 C.to_homogeneous(target_pos, target_ori)
             )
             if self.satisfy(
-                ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3
+                ee_pose, target, pos_error_threshold=0.01, ori_error_threshold=0.3
             ):
                 self.prev_pose = target
                 next_state = "match_leg_ori"
@@ -167,7 +167,7 @@ class StoolLeg(Leg):
                 C.to_homogeneous(target_pos, target_ori)
             )
             if self.satisfy(
-                ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3
+                ee_pose, target, pos_error_threshold=0.01, ori_error_threshold=0.2
             ):
                 self.prev_pose = target
                 next_state = "reach_table_top_xy"
@@ -194,7 +194,7 @@ class StoolLeg(Leg):
             rel = rel_rot_mat(leg_pose_robot, target_leg_pose_robot)
             target = rel @ ee_pose
             if self.satisfy(
-                ee_pose, target, pos_error_threshold=0.015, ori_error_threshold=0.3
+                ee_pose, target, pos_error_threshold=0.01, ori_error_threshold=0.2
             ):
                 self.prev_pose = target
                 next_state = "reach_table_top_z"
@@ -255,9 +255,9 @@ class StoolLeg(Leg):
             if self.satisfy(
                 ee_pose,
                 target,
-                pos_error_threshold=0.0,
-                ori_error_threshold=0.0,
-                max_len=10,
+                pos_error_threshold=0.005,
+                ori_error_threshold=0.05,
+                max_len=20,
             ):
                 self.prev_pose = target
                 next_state = "insert_release"
