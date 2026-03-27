@@ -42,9 +42,9 @@ sim_config["asset"] = {}
 sim_config["robot"].update(
     {
         "kp": [90, 90, 90, 70.0, 60.0, 80.0],  # Default positional gains.
-        # "kp": [90.0, 90.0, 90.0, 100.0, 100.0, 100.0], # needed for stool
+        # "kp": [50.0, 50.0, 50.0, 30.0, 30.0, 40.0],
         "kv": None,  # Default velocity gains.
-        # "kv": [7.0, 7.0, 7.0, 6.0, 6.0, 6.0],
+        # "kv": [10.0, 10.0, 10.0, 9.0, 9.0, 9.0],
         "arm_frictions": [
             0.05,
             0.05,
@@ -82,9 +82,9 @@ def default_asset_options():
     asset_options.thickness = 0.0
     asset_options.density = 600.0
     # asset_options.armature = 0.01
-    asset_options.linear_damping = 0.0
+    asset_options.linear_damping = 0.5
     asset_options.max_linear_velocity = 1000.0
-    asset_options.angular_damping = 0.0
+    asset_options.angular_damping = 1.5
     asset_options.max_angular_velocity = 1000.0
     asset_options.disable_gravity = False
     asset_options.enable_gyroscopic_forces = True
