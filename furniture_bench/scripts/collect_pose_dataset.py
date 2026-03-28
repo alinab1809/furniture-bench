@@ -9,10 +9,13 @@ import furniture_bench.controllers.control_utils as C
 import sys
 import os
 import cv2
+from future.backports.urllib.parse import unwrap
 from scipy.spatial.transform import Rotation as R
+from PIL import Image
+
 
 class PoseDataCollector:
-    def __init__(self, furniture="lamp", data_path="_rawpose_dataset_screw.h5"):
+    def __init__(self, furniture="lamp", data_path="_rawpose_dataset_1.h5"):
         data_path = furniture + data_path
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.furniture = furniture
@@ -20,10 +23,10 @@ class PoseDataCollector:
             "FurnitureSimFull-v0",
             furniture=furniture,
             num_envs=1,
-            headless=True,
+            headless=False,
             np_step_out=False,
             channel_first=False,  # Set to False to get (H, W, 3) for easy saving
-            randonmess=Randomness.LOW,
+            randonmess=Randomness.MEDIUM,
             record=True
         )
         self.data_path = data_path
@@ -36,15 +39,34 @@ class PoseDataCollector:
         mat[:3, :3] = R.from_quat(pose[3:7]).as_matrix()
         return mat
 
+    def save_high_res_png(self, folder, demo_idx, stage_name):
+        """
+        Renders a high-resolution image from the simulator and saves to disk.
+        """
+        # Render at a higher resolution (e.g., 1024x1024)
+        # Note: 'offscreen' rendering usually allows custom resolutions
+        img_array = self.env.render(mode='rgb_array')
+        print(img_array.shape)
+
+        img = Image.fromarray(img_array.cpu().numpy().squeeze())
+        filename = f"demo_{demo_idx}_{stage_name}.png"
+        filepath = os.path.join(folder, filename)
+        img.save(filepath)
+        print(f"📸 Saved high-res figure: {filepath}")
+
     def collect_dataset(self, num_demos=10):
         # Get the target relative pose from the furniture definition
         # This is the 'Golden Truth' for a successful insertion
         target_rel_poses = self.env.unwrapped.furniture.assembled_rel_poses
 
+        output_dir = "assembly_images/"
+        os.makedirs(output_dir, exist_ok=True)
+
         with h5py.File(self.data_path, "w") as f:
             demo = 0
             num_failed_demos = 0
             while demo < num_demos:
+                saved_flags = {"corner": False, "inserted": False, "screwed": False}
                 print(f"Starting Demo {demo + 1}/{num_demos}")
                 demo_key = f"demo_{demo}"
                 group = f.create_group(demo_key)
@@ -57,6 +79,9 @@ class PoseDataCollector:
                                                      shape=(0, 7),
                                                      maxshape=(None,7),
                                                      dtype='float32', chunks=(1,7))
+
+                obstacle_pose_ds = group.create_dataset("obstacle_pos", shape=(0,21), maxshape=(None,21),
+                                                     dtype='float32', chunks=(1,21))
 
                 # img_ds1 = group.create_dataset("color_image1",
                 #                               shape=(0, 224, 224, 3),
@@ -96,8 +121,11 @@ class PoseDataCollector:
                 if self.furniture in ["lamp", "round_table"]:
                     # for isinserted, we only look at the bulb and we don't want to track the hood once bulb assembly is done
                     part_idx1, part_idx2 = unwrapped.furniture.should_be_assembled[unwrapped.assemble_idx]
+                    print(part_idx1, part_idx2, unwrapped.furniture.should_be_assembled)
+
                 moved_to_corner = False
                 screwed_label = 0
+                corner_label = 0
 
                 while not done:
                     # 1. Get action from scripted agent
@@ -107,7 +135,7 @@ class PoseDataCollector:
                     # We use unwrapped to access the core FurnitureBench variables
                     if self.furniture not in ["lamp", "round_table"]:
                         part_idx1, part_idx2 = unwrapped.furniture.should_be_assembled[unwrapped.assemble_idx]
-
+                        # print("changing indices to ", part_idx1, part_idx2)
                     # 3. Get RAW Simulator Poses (Option A - No AprilTag transform)
                     raw_poses, _ = unwrapped._get_parts_poses(sim_coord=True)
                     raw_poses = raw_poses.squeeze().cpu().numpy()
@@ -123,7 +151,7 @@ class PoseDataCollector:
 
                     # 3. Check distance against every possible valid pose in the list
                     target_mats_list = target_rel_poses[(part_idx1, part_idx2)]
-                    part_idx1, part_idx2 = self.furniture.should_be_assembled[self.assemble_idx]
+                    # part_idx1, part_idx2 = unwrapped.furniture.should_be_assembled[unwrapped.assemble_idx]
                     distances = []
                     for target_mat in target_mats_list:
                         # Ensure the target is a numpy array (in case it's a list or tensor)
@@ -138,7 +166,7 @@ class PoseDataCollector:
 
                     # 4. The final label is 1 if we are close to ANY of the holes
                     min_dist = min(distances)
-                    label_dist = 1 if min_dist < 0.02 else 0
+                    label_dist = 1 if min_dist < 0.025 else 0
 
                     moving_part = self.env.furniture.parts[part_idx2]
 
@@ -153,7 +181,7 @@ class PoseDataCollector:
                             f"❌ Label mismatch at step {step_idx} (State: {current_state}, Dist: {min_dist:.4f}m). Restarting demo...")
                         failed_validation = True
                         num_failed_demos += 1
-                        if num_failed_demos > 14:
+                        if num_failed_demos > 24:
                             if self.furniture == "stool":
                                 print("failed too many times, exiting ", num_failed_demos)
                                 self.env.close()
@@ -167,6 +195,14 @@ class PoseDataCollector:
                     base_pose_ds[step_idx] = base_state
                     moving_pose_ds.resize((step_idx + 1, 7))
                     moving_pose_ds[step_idx] = moving_state
+                    obstacle_state = torch.zeros(21)
+                    i = 0
+                    for name in ["obstacle_front", "obstacle_right", "obstacle_left"]:
+                        obstacle_pos = unwrapped.rb_states[unwrapped.part_idxs[name]][0][:7]
+                        obstacle_state[i*7:(i+1)*7] = obstacle_pos
+                        i += 1
+                    obstacle_pose_ds.resize((step_idx + 1, 21))
+                    obstacle_pose_ds[step_idx] = obstacle_state
 
                     # img_ds1.resize((step_idx + 1, 224, 224, 3))
                     # img_ds1[step_idx] = obs["color_image1"].cpu().numpy().copy()
@@ -179,28 +215,32 @@ class PoseDataCollector:
                     inserted_label_dist_ds.resize((step_idx + 1,))
                     inserted_label_dist_ds[step_idx] = label_dist
 
-                    corner_label = 0
-                    if not moved_to_corner:
-                        if self.env.furniture.parts[part_idx1].pre_assemble_done:
-                            corner_label = 1
-                            moved_to_corner = True
+                    # corner_label = 0
+                    # if not moved_to_corner:
+                    #     if unwrapped.furniture.parts[part_idx1].pre_assemble_done:
+                    #         corner_label = 1
+                    #        moved_to_corner = True
+                    prev_label = screwed_label
+                    corner_label, _ = unwrapped.furniture.parts[part_idx1].is_object_in_corner(unwrapped.rb_states, unwrapped.part_idxs, unwrapped.sim_to_april_mat, unwrapped.april_to_robot_mat)
 
                     corner_label_ds.resize((step_idx + 1,))
-                    corner_label_ds[step_idx] = corner_label
+                    corner_label_ds[step_idx] = corner_label.cpu()
 
                     part1_pose = C.to_homogeneous(
-                        self.rb_states[part_idx1][0][:3],
-                        C.quat2mat(self.rb_states[part_idx1][0][3:7]),
+                        unwrapped.rb_states[unwrapped.part_idxs[unwrapped.furniture.parts[part_idx1].name]][0][:3],
+                        C.quat2mat(unwrapped.rb_states[unwrapped.part_idxs[unwrapped.furniture.parts[part_idx1].name]][0][3:7]),
                     )
                     part2_pose = C.to_homogeneous(
-                        self.rb_states[part_idx2][0][:3],
-                        C.quat2mat(self.rb_states[part_idx1][0][3:7]),
+                        unwrapped.rb_states[unwrapped.part_idxs[unwrapped.furniture.parts[part_idx2].name]][0][:3],
+                        C.quat2mat(unwrapped.rb_states[unwrapped.part_idxs[unwrapped.furniture.parts[part_idx2].name]][0][3:7]),
                     )
                     rel_pose = torch.linalg.inv(part1_pose) @ part2_pose
-                    assembled_rel_poses = self.furniture.assembled_rel_poses[(part_idx1, part_idx2)]
-                    if self.furniture.assembled(rel_pose.cpu().numpy(), assembled_rel_poses):
+                    assembled_rel_poses = unwrapped.furniture.assembled_rel_poses[(part_idx1, part_idx2)]
+                    # print(assembled_rel_poses, rel_pose)
+                    if unwrapped.furniture.assembled(rel_pose.cpu().numpy(), assembled_rel_poses):
                         screwed_label = 1
-
+                    if prev_label != screwed_label:
+                        print("SCREW LABEL SWITCHED ", screwed_label)
                     screwed_label_ds.resize((step_idx + 1,))
                     screwed_label_ds[step_idx] = screwed_label
 
@@ -208,8 +248,145 @@ class PoseDataCollector:
                         # inserted should now be False even if the distance is low
                         inserted_label_dist_ds[step_idx] = 0
 
+                    if unwrapped.furniture.parts[part_idx1].pre_assemble_done and not saved_flags["corner"]:
+                        self.save_high_res_png(output_dir, demo, "1_corner")
+                        saved_flags["corner"] = True
+
+                        # 2. Check Inserted State (using your inserted_label logic)
+                    if inserted_label == 1 and not saved_flags["inserted"]:
+                        self.save_high_res_png(output_dir, demo, "2_inserted")
+                        saved_flags["inserted"] = True
+
+                        # 3. Check Screwed State
+                    if unwrapped.furniture.assembled(rel_pose.cpu().numpy(), assembled_rel_poses) and not saved_flags[
+                        "screwed"]:
+                        self.save_high_res_png(output_dir, demo, "3_screwed")
+                        saved_flags["screwed"] = True
+
                     obs, rew, done, info = self.env.step(action)
+
                     step_idx += 1
+
+                    if done:
+                        self.save_high_res_png(output_dir, demo, "4_done")
+                        if self.furniture not in ["lamp", "round_table"]:
+                            part_idx1, part_idx2 = unwrapped.furniture.should_be_assembled[unwrapped.assemble_idx]
+                            # print("changing indices to ", part_idx1, part_idx2)
+                        # 3. Get RAW Simulator Poses (Option A - No AprilTag transform)
+                        raw_poses, _ = unwrapped._get_parts_poses(sim_coord=True)
+                        raw_poses = raw_poses.squeeze().cpu().numpy()
+
+                        dim = 7
+                        base_state = raw_poses[part_idx1 * dim: (part_idx1 + 1) * dim]
+                        moving_state = raw_poses[part_idx2 * dim: (part_idx2 + 1) * dim]
+
+                        # 4. Calculate GEOMETRIC Label
+                        T_base = self.get_transformation_matrix(base_state)
+                        T_moving = self.get_transformation_matrix(moving_state)
+                        T_current_rel = np.linalg.inv(T_base) @ T_moving
+
+                        # 3. Check distance against every possible valid pose in the list
+                        target_mats_list = target_rel_poses[(part_idx1, part_idx2)]
+                        # part_idx1, part_idx2 = unwrapped.furniture.should_be_assembled[unwrapped.assemble_idx]
+                        distances = []
+                        for target_mat in target_mats_list:
+                            # Ensure the target is a numpy array (in case it's a list or tensor)
+                            if isinstance(target_mat, torch.Tensor):
+                                target_mat = target_mat.cpu().numpy()
+                            elif isinstance(target_mat, list):
+                                target_mat = np.array(target_mat)
+
+                            # Calculate distance to this specific hole
+                            d = np.linalg.norm(T_current_rel[:3, 3] - target_mat[:3, 3])
+                            distances.append(d)
+
+                        # 4. The final label is 1 if we are close to ANY of the holes
+                        min_dist = min(distances)
+                        label_dist = 1 if min_dist < 0.025 else 0
+
+                        moving_part = self.env.furniture.parts[part_idx2]
+
+                        current_state = moving_part._state
+
+                        # "screw" is a dummy state when the screwing is done - we should switch from isinserted to isscrewedin there
+                        inserted_label = 1 if (
+                                    "screw" in current_state or "pre_grasp" in current_state and current_state != "screw") else 0
+
+                        if inserted_label == 1 and label_dist != 1:
+                            # agent says it is inserted but distance values say otherwise
+                            print(
+                                f"❌ Label mismatch at step {step_idx} (State: {current_state}, Dist: {min_dist:.4f}m). Restarting demo...")
+                            failed_validation = True
+                            num_failed_demos += 1
+                            if num_failed_demos > 24:
+                                if self.furniture == "stool":
+                                    print("failed too many times, exiting ", num_failed_demos)
+                                    self.env.close()
+                                    sys.exit()
+                            break
+                        elif label_dist == 1 and "insert" in current_state:
+                            inserted_label = 1
+
+                        # 5. Store current observation and calculated states
+                        base_pose_ds.resize((step_idx + 1, 7))
+                        base_pose_ds[step_idx] = base_state
+                        moving_pose_ds.resize((step_idx + 1, 7))
+                        moving_pose_ds[step_idx] = moving_state
+                        obstacle_state = torch.zeros(21)
+                        i = 0
+                        for name in ["obstacle_front", "obstacle_right", "obstacle_left"]:
+                            obstacle_pos = unwrapped.rb_states[unwrapped.part_idxs[name]][0][:7]
+                            obstacle_state[i * 7:(i + 1) * 7] = obstacle_pos
+                            i += 1
+                        obstacle_pose_ds.resize((step_idx + 1, 21))
+                        obstacle_pose_ds[step_idx] = obstacle_state
+
+                        # img_ds1.resize((step_idx + 1, 224, 224, 3))
+                        # img_ds1[step_idx] = obs["color_image1"].cpu().numpy().copy()
+                        # img_ds2.resize((step_idx + 1, 224, 224, 3))
+                        # img_ds2[step_idx] = obs["color_image2"].cpu().numpy().copy()
+
+                        inserted_label_ds.resize((step_idx + 1,))
+                        inserted_label_ds[step_idx] = inserted_label
+
+                        inserted_label_dist_ds.resize((step_idx + 1,))
+                        inserted_label_dist_ds[step_idx] = label_dist
+
+                        # corner_label = 0
+                        # if not moved_to_corner:
+                        #     if unwrapped.furniture.parts[part_idx1].pre_assemble_done:
+                        #         corner_label = 1
+                        #        moved_to_corner = True
+                        prev_label = screwed_label
+                        corner_label, _ = unwrapped.furniture.parts[part_idx1].is_object_in_corner(unwrapped.rb_states,
+                                                                                                   unwrapped.part_idxs,
+                                                                                                   unwrapped.sim_to_april_mat,
+                                                                                                   unwrapped.april_to_robot_mat)
+
+                        corner_label_ds.resize((step_idx + 1,))
+                        corner_label_ds[step_idx] = corner_label.cpu()
+
+                        part1_pose = C.to_homogeneous(
+                            unwrapped.rb_states[unwrapped.part_idxs[unwrapped.furniture.parts[part_idx1].name]][0][:3],
+                            C.quat2mat(
+                                unwrapped.rb_states[unwrapped.part_idxs[unwrapped.furniture.parts[part_idx1].name]][0][
+                                    3:7]),
+                        )
+                        part2_pose = C.to_homogeneous(
+                            unwrapped.rb_states[unwrapped.part_idxs[unwrapped.furniture.parts[part_idx2].name]][0][:3],
+                            C.quat2mat(
+                                unwrapped.rb_states[unwrapped.part_idxs[unwrapped.furniture.parts[part_idx2].name]][0][
+                                    3:7]),
+                        )
+                        rel_pose = torch.linalg.inv(part1_pose) @ part2_pose
+                        assembled_rel_poses = unwrapped.furniture.assembled_rel_poses[(part_idx1, part_idx2)]
+                        # print(assembled_rel_poses, rel_pose)
+                        if unwrapped.furniture.assembled(rel_pose.cpu().numpy(), assembled_rel_poses):
+                            screwed_label = 1
+                        if prev_label != screwed_label:
+                            print("SCREW LABEL SWITCHED ", screwed_label)
+                        screwed_label_ds.resize((step_idx + 1,))
+                        screwed_label_ds[step_idx] = screwed_label
 
 
                 if failed_validation:
