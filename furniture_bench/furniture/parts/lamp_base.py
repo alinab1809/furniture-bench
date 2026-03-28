@@ -202,7 +202,7 @@ class LampBase(Part):
             if self.gripper_greater(
                 gripper_width,
                 config["robot"]["max_gripper_width"]["square_table"] - 0.001,
-                cnt_max=20,
+                cnt_max=30,
             ):
                 next_state = "go_up"
         if self._state == "go_up":
