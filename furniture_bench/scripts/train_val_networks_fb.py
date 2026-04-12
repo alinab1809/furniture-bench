@@ -14,11 +14,15 @@ import os
 import numpy as np
 
 class ValNet(nn.Module):
-    def __init__(self):
+    def __init__(self, task="is_inserted"):
         super().__init__()
         # Input: 7 (pose1) + 7 (pose2) = 14
+        if task == "is_in_corner":
+            in_dim = 28
+        else:
+            in_dim = 14
         self.mlp = nn.Sequential(
-            nn.Linear(14, 32),
+            nn.Linear(in_dim, 32),
             nn.ReLU(),
             # nn.Linear(32, 32),
             # nn.ReLU(),
@@ -51,7 +55,7 @@ class PointNetEncoder(nn.Module):
         return x
 
 class PointNet(nn.Module):
-    def __init__(self):
+    def __init__(self, task="is_inserted"):
         super().__init__()
         self.encoder = PointNetEncoder()
         self.fc = nn.Sequential(
@@ -76,20 +80,22 @@ class ValuationDataset(Dataset):
         ys = []
 
         for item in furniture:
-            path = data_path / f"{item}_rawpose_dataset.h5"
+            path = data_path / f"{item}_rawpose_dataset_1.h5"
             if not os.path.exists(path):
                 print(f"⚠️ Warning: File {path} not found. Skipping.")
                 continue
 
             print(f"📦 Loading data from: {path}")
             with h5py.File(path, "r") as f:
-                print(f.keys())
                 for g_name in f.keys():
                     group = f[g_name]
 
                     # Load this demo's data
                     base = group["base_pose"][:]  # (T, 7)
-                    moving = group["moving_pose"][:]  # (T, 7)
+                    if task == "is_in_corner":
+                        moving = group["obstacle_pos"][:]
+                    else:
+                        moving = group["moving_pose"][:]  # (T, 7)
                     labels = group[task][:]  # (T,)
 
                     if task == "is_inserted":
@@ -139,94 +145,124 @@ class ValuationDataset(Dataset):
 
 
 class PointCloudValuationDataset(Dataset):
-    def __init__(self, data_dir, furniture_list, mesh_dir, n_points=1024):
+    def __init__(self, data_dir, furniture_list, mesh_dir, n_points=1024, task="is_inserted"):
         self.n_points = n_points
+        self.task = task  # Store the task name
 
         all_base_poses, all_moving_poses, all_y = [], [], []
-        self.sample_type = []  # To track which furniture each index belongs to
+        self.sample_type = []
 
-        # Initialize dictionaries to hold canonical points
         self.base_mesh_points = {}
-        self.moving_mesh_points = {}
+        self.moving_mesh_points = {}  # For "is_inserted", this is the bulb/leg
+
+        # Specifically for the corner task
+        self.obstacle_front_points = None
+        self.obstacle_side_points = None
+
+        # Pre-load obstacle meshes if needed for the task
+        if self.task == "is_in_corner":
+            self.obstacle_front_points = self._load_mesh(f"{mesh_dir}/obstacle_front.obj")
+            self.obstacle_side_points = self._load_mesh(f"{mesh_dir}/obstacle_side.obj")
 
         for item in furniture_list:
-            # 1. Load the Meshes for this furniture type
+            # 1. Load the Meshes (Base meshes are always needed)
             if item == "lamp":
                 self.base_mesh_points[item] = self._load_mesh(f"{mesh_dir}/lamp/lamp_base.obj")
-                self.moving_mesh_points[item] = self._load_mesh(f"{mesh_dir}/lamp/lamp_bulb.obj")
+                if self.task != "is_in_corner":
+                    self.moving_mesh_points[item] = self._load_mesh(f"{mesh_dir}/lamp/lamp_bulb.obj")
+
             elif item == "one_leg":
                 self.base_mesh_points[item] = self._load_mesh(f"{mesh_dir}/square_table/square_table_top.obj")
                 self.moving_mesh_points[item] = self._load_mesh(f"{mesh_dir}/square_table/square_table_leg.obj")
+
             elif item == "stool":
                 self.base_mesh_points[item] = self._load_mesh(f"{mesh_dir}/{item}/{item}_seat.obj")
                 self.moving_mesh_points[item] = self._load_mesh(f"{mesh_dir}/{item}/{item}_leg1.obj")
+
             else:
                 self.base_mesh_points[item] = self._load_mesh(f"{mesh_dir}/{item}/{item}_top.obj")
                 self.moving_mesh_points[item] = self._load_mesh(f"{mesh_dir}/{item}/{item}_leg.obj")
 
             # 2. Load the Poses from H5
-            file_path = data_dir / f"{item}_rawpose_dataset.h5"
+            file_path = data_dir / f"{item}_rawpose_dataset_1.h5"
             if not os.path.exists(file_path):
-                print(f"⚠️ {file_path} not found. Skipping.")
                 continue
 
             with h5py.File(file_path, "r") as f:
                 for g_name in f.keys():
                     group = f[g_name]
+                    base = group["base_pose"][:]
 
-                    # Load this demo's data
-                    base = group["base_pose"][:]  # (T, 7)
-                    moving = group["moving_pose"][:]  # (T, 7)
-                    labels = group["is_inserted"][:]  # (T,)
-                    labels_dist = group["is_inserted_dist"][:]
-
-                    indices_to_use = labels == labels_dist
-                    base = base[indices_to_use]
-                    moving = moving[indices_to_use]
-                    labels = labels[indices_to_use]
+                    # Logic switch for input types
+                    if self.task == "is_in_corner":
+                        # Use obstacle_pos (21 dims)
+                        moving = group["obstacle_pos"][:]
+                        labels = group[self.task][:]
+                    else:
+                        # Standard moving_pose (7 dims)
+                        moving = group["moving_pose"][:]
+                        labels = group[self.task][:]
+                        labels_dist = group["is_inserted_dist"][:]
+                        indices_to_use = labels == labels_dist
+                        base = base[indices_to_use]
+                        moving = moving[indices_to_use]
+                        labels = labels[indices_to_use]
 
                     combined = np.hstack((base, moving))
-
                     # multiple demos with low randomness in start position -> we might have redundant samples
                     combined_rounded = np.round(combined, decimals=4)
                     _, unique_indices = np.unique(combined_rounded, axis=0, return_index=True)
                     unique_indices.sort()
-
                     all_base_poses.append(base[unique_indices])
                     all_moving_poses.append(moving[unique_indices])
                     all_y.append(labels[unique_indices])
                     self.sample_type.extend([item] * len(unique_indices))
 
-        # 3. Final Concatenation
         self.base_poses = np.concatenate(all_base_poses, axis=0)
-        self.moving_poses = np.concatenate(all_moving_poses, axis=0)
+        self.moving_poses = np.concatenate(all_moving_poses, axis=0)  # Can be (N, 7) or (N, 21)
         self.y = np.concatenate(all_y, axis=0)
         self.sample_type = np.array(self.sample_type)
-        print(f"✅ Loaded total of {len(self.y)} frames from {len(furniture_list)} files.")
 
     def __getitem__(self, idx):
-        # Identify which furniture geometry to use
         f_type = self.sample_type[idx]
-
-        # Get canonical points for this specific furniture
         p_base = self.base_mesh_points[f_type].clone()
-        p_moving = self.moving_mesh_points[f_type].clone()
-
-        # Transform them using the world pose at this index
         p_base = self.transform_points(p_base, self.base_poses[idx])
-        p_moving = self.transform_points(p_moving, self.moving_poses[idx])
+
+        if self.task == "is_in_corner":
+            # 21-dim pose: [front_pose(7), left_pose(7), right_pose(7)]
+            full_pose = self.moving_poses[idx]
+
+            # Transform Front Obstacle
+            p_front = self.obstacle_front_points.clone()
+            p_front = self.transform_points(p_front, full_pose[0:7])
+
+            # Transform Left Obstacle (Side mesh)
+            p_left = self.obstacle_side_points.clone()
+            p_left = self.transform_points(p_left, full_pose[7:14])
+
+            # Transform Right Obstacle (Side mesh)
+            p_right = self.obstacle_side_points.clone()
+            p_right = self.transform_points(p_right, full_pose[14:21])
+
+            # Combine all 3 obstacles into one "moving" cloud
+            p_moving = torch.cat([p_front, p_left, p_right], dim=0)
+
+            # Subsample to keep point cloud size consistent (optional)
+            # If PointNet expects 2048 total, and base is 1024, p_moving should be 1024
+            indices = torch.randperm(len(p_moving))[:self.n_points]
+            p_moving = p_moving[indices]
+        else:
+            # Standard single mesh logic
+            p_moving = self.moving_mesh_points[f_type].clone()
+            p_moving = self.transform_points(p_moving, self.moving_poses[idx])
 
         # Combine into a single scene point cloud
         scene_pc = torch.cat([p_base, p_moving], dim=0)
-
-        # Zero-center the cloud around the base for better generalization
-        scene_pc -= p_base.mean(dim=0)
-
-        # PointNet expects (Channel, N_Points) -> (3, 2048)
+        scene_pc -= p_base.mean(dim=0)  # Zero-center
         scene_pc = scene_pc.transpose(0, 1)
 
         label = 0.99 if self.y[idx] == 1 else 0.01
-        return {"x": scene_pc, "y": torch.tensor(label, dtype=torch.float32)}
+        return {"x": scene_pc, "y": label}
 
     def _load_mesh(self, path):
         mesh = to_single_mesh(trimesh.load(path))
@@ -257,60 +293,116 @@ def to_single_mesh(loaded_obj):
         ])
     return loaded_obj
 
-def visualize_with_meshes(base_mesh_path, moving_mesh_path, base_pose, moving_pose, save_path):
-    # 1. Load and force into Mesh objects
-    base_mesh = to_single_mesh(trimesh.load(base_mesh_path))
-    moving_mesh = to_single_mesh(trimesh.load(moving_mesh_path))
 
-    # 2. Transformation Matrix Helper
-    def get_matrix(pose):
-        mat = np.eye(4)
-        mat[:3, 3] = pose[:3]  # [x, y, z]
-        # Scipy expects [x, y, z, w]. Ensure your dataset matches!
-        mat[:3, :3] = R.from_quat(pose[3:]).as_matrix()
-        return mat
-
-    # 3. Apply transformations
-    base_mesh.apply_transform(get_matrix(base_pose))
-    moving_mesh.apply_transform(get_matrix(moving_pose))
-
-    # 4. Professional Muted Coloring
-    # Blue for Base (RGBA)
-    base_mesh.visual.face_colors = [150, 150, 220, 180]
-    # Red for Moving (RGBA)
-    moving_mesh.visual.face_colors = [220, 150, 150, 255]
-
-    # 5. Export as GLB (for local 3D viewing)
-    scene = trimesh.Scene([base_mesh, moving_mesh])
-    export_name = save_path.replace(".png", ".glb")
-    scene.export(export_name)
-    print(f"✅ Exported 3D scene to {export_name}")
-
-def visualize_model_predictions(model, dataloader, num_samples=3):
+def visualize_model_predictions(model, dataloader, num_samples=3, device=torch.device("cpu"), pc=False):
     model.eval()
+    model = model.to(device)
 
-    # Get one batch
+    # 1. Get Batch
     batch = next(iter(dataloader))
-    inputs = batch["x"]
-    labels = batch["y"]
+    inputs = batch["x"].to(device)  # Can be Poses (B, 14/28) or PointCloud (B, 3, N)
+    labels = batch["y"].to(device)
 
-    # Run Inference
+    # 2. Run Inference
     with torch.no_grad():
         preds = model(inputs)
 
-    # Pick random indices
+    # 3. Pick random indices
     indices = np.random.choice(len(inputs), num_samples, replace=False)
-
+    visualized = 0
     for idx in range(len(inputs)):
-        if (preds[idx] > 0.5 and not labels[idx] > 0.5) or (preds[idx] < 0.5 and not labels[idx] < 0.5) or idx in indices:
-            data = inputs[idx].numpy()
+        if visualized > num_samples + 5:
+            break
+        # Check for misclassifications or random samples
+        if (preds[idx] > 0.5 and not labels[idx] > 0.5) or \
+                (preds[idx] < 0.5 and not labels[idx] < 0.5) or idx in indices:
+            visualized += 1
+            data = inputs[idx].cpu().numpy()
+            target = labels[idx].cpu().item()
+            prediction = preds[idx].cpu().item()
+            save_name = f"{idx}_{prediction:.2f}_{target}.glb"
 
-            target = labels[idx].item()
-            prediction = preds[idx].item()
+            if pc:
+                # --- POINT CLOUD VISUALIZATION ---
+                # PointNet input is usually (3, N), trimesh needs (N, 3)
+                if data.shape[0] == 3:
+                    data = data.T
 
-            base_path = "~/code/furniture-bench/furniture_bench/assets/furniture/mesh/lamp/lamp_base.obj"
-            moving_path = "~/code/furniture-bench/furniture_bench/assets/furniture/mesh/lamp/lamp_bulb.obj"
-            visualize_with_meshes(base_path, moving_path, data[:7], data[7:14], f"check_alignment_{idx}_{prediction}_{target}.glb")
+                pcd = trimesh.PointCloud(vertices=data)
+                # Apply a default color to the point cloud
+                pcd.colors = [100, 100, 250, 255]
+                pcd.export(f"pc_check_{save_name}")
+                print(f"✅ Exported PointCloud to pc_check_{save_name}")
+
+            else:
+                # --- MESH / POSE VISUALIZATION ---
+                base_path = "~/code/furniture-bench/furniture_bench/assets/furniture/mesh/lamp/lamp_base.obj"
+
+                if data.shape[0] == 28:
+                    # Obstacle Bench Logic
+                    obs_front = "~/code/furniture-bench/furniture_bench/assets/furniture/mesh/obstacle_front.obj"
+                    obs_side = "~/code/furniture-bench/furniture_bench/assets/furniture/mesh/obstacle_side.obj"
+
+                    moving_paths = [obs_front, obs_side, obs_side]
+                    moving_poses = [data[7:14], data[14:21], data[21:28]]
+                    mode_prefix = "obstacle_base"
+                else:
+                    # Default Lamp/Furniture Logic
+                    bulb_path = "~/code/furniture-bench/furniture_bench/assets/furniture/mesh/lamp/lamp_bulb.obj"
+                    moving_paths = [bulb_path]
+                    moving_poses = [data[7:14]]
+                    mode_prefix = "lamp_bulb"
+
+                visualize_with_meshes(
+                    base_path,
+                    moving_paths,
+                    data[:7],
+                    moving_poses,
+                    f"{mode_prefix}_{save_name}"
+                )
+
+
+def visualize_with_meshes(base_mesh_path, moving_mesh_paths, base_pose, moving_poses, save_path):
+    def get_matrix(pose):
+        mat = np.eye(4)
+        mat[:3, 3] = pose[:3]
+        mat[:3, :3] = R.from_quat(pose[3:]).as_matrix()
+        return mat
+
+    base_mesh = to_single_mesh(trimesh.load(base_mesh_path))
+    base_mesh.apply_transform(get_matrix(base_pose))
+    base_mesh.visual.face_colors = [150, 150, 220, 150]  # Muted Blue
+
+    all_meshes = [base_mesh]
+
+    # 2. Process all moving parts (Bulb or 3 Obstacles)
+    colors = [
+        [220, 150, 150, 255],  # Soft Red
+        [150, 220, 150, 255],  # Soft Green
+        [220, 220, 150, 255]  # Soft Yellow
+    ]
+
+    for i, (m_path, m_pose) in enumerate(zip(moving_mesh_paths, moving_poses)):
+        m_mesh = to_single_mesh(trimesh.load(m_path))
+        m_mesh.apply_transform(get_matrix(m_pose))
+        # Assign unique color if multiple obstacles, else standard red
+        m_mesh.visual.face_colors = colors[i % len(colors)]
+        all_meshes.append(m_mesh)
+
+    # 3. Export Scene
+    scene = trimesh.Scene(all_meshes)
+    scene.export(save_path)
+    print(f"✅ Exported 3D scene to {save_path}")
+
+
+def to_single_mesh(loaded_geometry):
+    """Helper to ensure we have a single mesh object from trimesh.load"""
+    if isinstance(loaded_geometry, trimesh.Scene):
+        return trimesh.util.concatenate([
+            geom for geom in loaded_geometry.geometry.values()
+            if isinstance(geom, trimesh.Trimesh)
+        ])
+    return loaded_geometry
 
 def train_single_network(data_path, network_name, network, furniture, pointcloud=False):
     torch.manual_seed(42)
@@ -324,7 +416,7 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
         dataset = ValuationDataset(data_path, furniture, task=network_name)
     else:
         mesh_dir = "~/code/furniture-bench/furniture_bench/assets/furniture/mesh"
-        dataset = PointCloudValuationDataset(data_path, furniture, mesh_dir=mesh_dir)
+        dataset = PointCloudValuationDataset(data_path, furniture, mesh_dir=mesh_dir, task=network_name)
 
     train_size = int(0.8 * len(dataset))
     test_size = len(dataset) - train_size
@@ -352,9 +444,9 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
     # 3. Hyperparameters
     # For to_platform (12 points), we use a tiny batch size.
     bs = 128
-    lr = 4e-3 if not pointcloud else 1e-3
+    lr = 5e-3 if not pointcloud else 1e-3
 
-    epochs = 300 if not pointcloud else 150
+    epochs = 250 if not pointcloud else 50
 
     wandb.init(entity="alinaboehm", project="pretrain_valuation", config={"bs": bs, "lr": lr, "epochs": epochs, "pointcloud": pointcloud})
     furnitre_str = ""
@@ -472,7 +564,7 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
     wandb.log({"eval_accuracy_pos": acc_pos, "epoch": epoch + 1})
     wandb.log({"eval_accuracy_neg": acc_neg, "epoch": epoch + 1})
 
-    visualize_model_predictions(network, test_loader, num_samples=6)
+    visualize_model_predictions(network, test_loader, num_samples=6, device=device, pc=pointcloud)
 
     print(f"Final: Epoch {epoch + 1} | Loss: {avg_loss:.6f}")
     # Save checkpoint
@@ -543,9 +635,10 @@ if __name__ == "__main__":
     parser.add_argument("--pc", action="store_true")
     args = parser.parse_args()
     pointcloud = args.pc
+    task = "is_screwed_in"
     if pointcloud:
         network = PointNet()
     else:
-        network = ValNet()
-    furniture = ["lamp"]
-    train_single_network(Path("./"), network_name="is_screwed_in", network=network, furniture=furniture, pointcloud=pointcloud)
+        network = ValNet(task)
+    furniture = ["lamp", "one_leg", "round_table"]
+    train_single_network(Path("./"), network_name=task, network=network, furniture=furniture, pointcloud=pointcloud)
