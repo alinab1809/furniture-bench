@@ -1485,7 +1485,7 @@ config: Dict[str, Any] = {
                 "reset_ori": [rot_mat(np.array([-np.arctan2(7.6, 52), 0, 0]), hom=True)] * 4
                 + [rot_mat([-np.pi / 2, 0, 0], hom=True)],
                 "default_assembled_pose": get_mat(
-                    [0, -0.0678, 0], [0, 0, np.pi],
+                    [0, -0.065, 0], [0, 0, np.pi],
                 ),
                 "high_rand_reset_pos": [
                     [np.array([0.07429203, 0.29051307, -0.0336427])],
