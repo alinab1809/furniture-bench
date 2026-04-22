@@ -53,7 +53,8 @@ class LampHood(Part):
         # Veritical orientation.
         return pose[2, 1] > 0.8
 
-    def reset(self):
+    def reset(self, worker=None):
+        super().reset()
         self.pre_assemble_done = False
         self._state = "move_up"
         self.gripper_action = -1
@@ -67,13 +68,14 @@ class LampHood(Part):
         part_idxs,
         sim_to_april_mat,
         april_to_robot,
+        env_idx=0
     ):
         next_state = self._state
 
         ee_pose = C.to_homogeneous(ee_pos, C.quat2mat(ee_quat))
         hood_pose = C.to_homogeneous(
-            rb_states[part_idxs["lamp_hood"]][0][:3],
-            C.quat2mat(rb_states[part_idxs["lamp_hood"]][0][3:7]),
+            rb_states[part_idxs["lamp_hood"]][env_idx][:3],
+            C.quat2mat(rb_states[part_idxs["lamp_hood"]][env_idx][3:7]),
         )
 
         hood_pose = sim_to_april_mat @ hood_pose

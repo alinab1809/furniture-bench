@@ -40,7 +40,8 @@ class Leg(Part):
 
         self.part_attached_skill_idx = 4
 
-    def reset(self):
+    def reset(self, worker=None):
+        super().reset()
         self.prev_pose = None
         self._state = "reach_leg_floor_xy"
         self.gripper_action = -1

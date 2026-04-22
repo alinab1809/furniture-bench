@@ -335,12 +335,12 @@ class Furniture(ABC):
 
         return color_shm, depth_shm
 
-    def reset(self):
+    def reset(self, worker=None):
         """Reset filter and assembled parts."""
         self.reset_pose_filter()
         self.assembled_set = set()
         for part in self.parts:
-            part.reset()
+            part.reset(worker)
 
     def compute_assemble(
         self,

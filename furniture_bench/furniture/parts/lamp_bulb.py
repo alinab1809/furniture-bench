@@ -1,3 +1,5 @@
+import sys
+
 import numpy as np
 import torch
 import numpy.typing as npt
@@ -22,10 +24,16 @@ class LampBulb(Leg):
         self.grasp_margin_x = 0.043
         self.grasp_margin_z = 0.053
 
-    def reset(self):
+    def reset(self, worker=None):
+        super().reset(worker)
         self.prev_pose = None
-        self._state = "reach_bulb_floor_xy"
-        self.gripper_action = -1
+        if worker is None:
+            print("set state to bulb_floor_xy", worker)
+            self._state = "reach_bulb_floor_xy"
+        else:
+            print("set state to pre_grasp, worker")
+            self._state = "pre_grasp"
+        self.gripper_action = -1.
 
     def _find_down_z(self, mat):
         max_mat = mat.clone()
@@ -62,7 +70,6 @@ class LampBulb(Leg):
         # 3. Check distance
         # Insertion usually implies the bulb tip is within 1-2cm of the socket center
         pos_error = torch.norm(bulb_pose[:3, 3] - target_hole_pose[:3, 3])
-
         # print("POS ERROR ", pos_error)
         return pos_error < 0.02, pos_error
 
@@ -109,7 +116,11 @@ class LampBulb(Leg):
             part_idxs,
             sim_to_april_mat,
             april_to_robot,
-            assemble_to):
+            assemble_to,
+            env_idx=0,
+            rng=None,
+            torch_rng=None):
+
         def rot_mat_tensor(x, y, z, device):
             return torch.tensor(rot_mat([x, y, z], hom=True), device=device).float()
 
@@ -121,14 +132,13 @@ class LampBulb(Leg):
 
         ee_pose = C.to_homogeneous(ee_pos, C.quat2mat(ee_quat))
         base_pose = C.to_homogeneous(
-            rb_states[part_idxs[assemble_to]][0][:3],
-            C.quat2mat(rb_states[part_idxs[assemble_to]][0][3:7]),
+            rb_states[part_idxs[assemble_to]][env_idx][:3],
+            C.quat2mat(rb_states[part_idxs[assemble_to]][env_idx][3:7]),
         )
         bulb_pose = C.to_homogeneous(
-            rb_states[part_idxs[self.name]][0][:3],
-            C.quat2mat(rb_states[part_idxs[self.name]][0][3:7]),
+            rb_states[part_idxs[self.name]][env_idx][:3],
+            C.quat2mat(rb_states[part_idxs[self.name]][env_idx][3:7]),
         )
-
         base_pose = sim_to_april_mat @ base_pose
         bulb_pose = sim_to_april_mat @ bulb_pose
 
@@ -149,8 +159,8 @@ class LampBulb(Leg):
             bulb_pose = self._find_down_z(bulb_pose).clone().to(device)
             # Margin for bulb pose
             bulb_pose = (
-                torch.tensor(get_mat([0, 0.043, 0], [0, 0, 0]), device=device)
-                @ bulb_pose
+                    torch.tensor(get_mat([0, 0.043, 0], [0, 0, 0]), device=device)
+                    @ bulb_pose
             )
             rot = rot_mat_tensor(np.pi / 2, -np.pi / 2, 0, device)
             pos = bulb_pose[:4, 3]
@@ -171,16 +181,16 @@ class LampBulb(Leg):
             theta_y = torch.acos(bulb_pose[1, 1]).detach().cpu().numpy()
             sign = 1 if bulb_pose[0, 1] > 0 else -1
             target_ori = (
-                rot_mat_tensor(0, 0, sign * theta_y, device)
-                @ margin
-                @ april_to_robot
-                @ rot
+                    rot_mat_tensor(0, 0, sign * theta_y, device)
+                    @ margin
+                    @ april_to_robot
+                    @ rot
             )[:3, :3]
             # Get the y-axis rotation.
             target_pos = (
-                april_to_robot
-                @ torch.tensor(get_mat([0, 0.043, 0], [0, 0, 0]), device=device)
-                @ bulb_pose[:4, 3]
+                    april_to_robot
+                    @ torch.tensor(get_mat([0, 0.043, 0], [0, 0, 0]), device=device)
+                    @ bulb_pose[:4, 3]
             )[:3]
             target_pos[2] = ee_pos[2]
             target = C.to_homogeneous(target_pos, target_ori)
@@ -193,16 +203,16 @@ class LampBulb(Leg):
             theta_y = torch.acos(bulb_pose[1, 1]).detach().cpu().numpy()
             sign = 1 if bulb_pose[0, 1] > 0 else -1
             target_ori = (
-                rot_mat_tensor(0, 0, sign * theta_y, device)
-                @ margin
-                @ april_to_robot
-                @ rot
+                    rot_mat_tensor(0, 0, sign * theta_y, device)
+                    @ margin
+                    @ april_to_robot
+                    @ rot
             )[:3, :3]
             # Get the y-axis rotation.
             target_pos = (
-                april_to_robot
-                @ torch.tensor(get_mat([0, 0.043, 0], [0, 0, 0]), device=device)
-                @ bulb_pose[:4, 3]
+                    april_to_robot
+                    @ torch.tensor(get_mat([0, 0.043, 0], [0, 0, 0]), device=device)
+                    @ bulb_pose[:4, 3]
             )[:3]
             target_pos[2] += 0.01  # Margin.
             # target_pos[2] = ee_pos[2]
@@ -213,7 +223,7 @@ class LampBulb(Leg):
         elif self._state == "pick_leg":
             target = self.prev_pose
             self.gripper_action = 1
-            if self.gripper_less(gripper_width, 2 * self.half_width + 0.001):
+            if self.gripper_less(gripper_width, 2 * self.half_width + 0.001, cnt_max=15):
                 self.prev_pose = target
                 next_state = "lift_up"
         elif self._state == "lift_up":
@@ -225,7 +235,7 @@ class LampBulb(Leg):
                 C.to_homogeneous(target_pos, target_ori)
             )
             if self.satisfy(
-                ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3
+                    ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3
             ):
                 self.prev_pose = target
                 next_state = "move_center"
@@ -236,7 +246,7 @@ class LampBulb(Leg):
                 C.to_homogeneous(target_pos, target_ori)
             )
             if self.satisfy(
-                ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3
+                    ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3
             ):
                 self.prev_pose = target
                 next_state = "match_leg_ori"
@@ -248,7 +258,7 @@ class LampBulb(Leg):
                 C.to_homogeneous(target_pos, target_ori)
             )
             if self.satisfy(
-                ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3, max_len=50
+                    ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3, max_len=30
             ):
                 self.prev_pose = target
                 next_state = "reach_base_xy"
@@ -256,12 +266,12 @@ class LampBulb(Leg):
             bulb_pose_robot = april_to_robot @ bulb_pose
             bulb_pose_robot = find_bulb_pose_x_look_front(bulb_pose_robot)
             base_hole_pose_robot = (
-                april_to_robot
-                @ base_pose
-                @ torch.tensor(
-                    get_mat(self.default_assembled_pose[:3, 3], [0.0, 0.0, 0.0]),
-                    device=device,
-                )
+                    april_to_robot
+                    @ base_pose
+                    @ torch.tensor(
+                get_mat(self.default_assembled_pose[:3, 3], [0.0, 0.0, 0.0]),
+                device=device,
+            )
             )
             target_hole_pose_robot = torch.tensor(
                 [
@@ -275,24 +285,24 @@ class LampBulb(Leg):
             rel = rel_rot_mat(bulb_pose_robot, target_hole_pose_robot)
             target = rel @ ee_pose
             if self.satisfy(
-                ee_pose,
-                target,
-                pos_error_threshold=0.0,
-                ori_error_threshold=0.3,
-                max_len=60,
+                    ee_pose,
+                    target,
+                    pos_error_threshold=0.0,
+                    ori_error_threshold=0.3,
+                    max_len=60,
             ):
                 self.prev_pose = target
                 next_state = "reach_base_z"
-        else:
+        elif self._state == "reach_base_z":
             bulb_pose_robot = april_to_robot @ bulb_pose
             bulb_pose_robot = find_bulb_pose_x_look_front(bulb_pose_robot)
             base_hole_pose_robot = (
-                april_to_robot
-                @ base_pose
-                @ torch.tensor(
-                    get_mat(self.default_assembled_pose[:3, 3], [0.0, 0.0, 0.0]),
-                    device=device,
-                )
+                    april_to_robot
+                    @ base_pose
+                    @ torch.tensor(
+                get_mat(self.default_assembled_pose[:3, 3], [0.0, 0.0, 0.0]),
+                device=device,
+            )
             )
             target_ori = torch.tensor(
                 get_mat([0, 0, 0], [np.pi / 2, 0, np.pi / 4]), device=device
@@ -303,11 +313,137 @@ class LampBulb(Leg):
             rel = rel_rot_mat(bulb_pose_robot, target_hole_pose_robot)
             target = rel @ ee_pose
             target[2] += 0.03  # Margin.
-            if self.satisfy(
-                ee_pose, target, pos_error_threshold=0.000, ori_error_threshold=0.0, max_len=200
-            ):
-                self.prev_pose = target
 
+            is_inserted, pos_error = self.is_inserted(rb_states, (part_idxs[assemble_to][env_idx],
+                                                                part_idxs[self.name][env_idx]), sim_to_april_mat)
+            self.prev_pose = target
+            # if is_inserted:
+            #     next_state = "release"
+
+            # if self.satisfy(
+            #         ee_pose, target, pos_error_threshold=0.000, ori_error_threshold=0.0, max_len=500
+            # ):
+            #     self.prev_pose = target
+        elif self._state == "release":
+            target = self.prev_pose
+            self.gripper_action = -1
+            if self.gripper_greater(
+                gripper_width,
+                config["robot"]["max_gripper_width"]["lamp"] - 0.001,
+            ):
+                next_state = "done"
+        else:
+            target = self.prev_pose
+            # next_state = "pre_grasp"
+            # print(self.is_inserted(rb_states, part_idxs, sim_to_april_mat))
+
+        skill_complete = self.may_transit_state(next_state)
+
+        return (
+            target[:3, 3],
+            C.mat2quat(target[:3, :3]),
+            torch.tensor([self.gripper_action], device=device),
+            skill_complete,
+        )
+
+    def screw_step(self,
+        ee_pos,
+        ee_quat,
+        gripper_width,
+        rb_states,
+        part_idxs,
+        sim_to_april_mat,
+        april_to_robot,
+        assemble_to,
+        env_idx=0):
+        def rot_mat_tensor(x, y, z, device):
+            return torch.tensor(rot_mat([x, y, z], hom=True), device=device).float()
+
+        def rel_rot_mat(s, t):
+            s_inv = torch.linalg.inv(s)
+            return t @ s_inv
+
+        next_state = self._state
+
+        ee_pose = C.to_homogeneous(ee_pos, C.quat2mat(ee_quat))
+        base_pose = C.to_homogeneous(
+            rb_states[part_idxs[assemble_to]][env_idx][:3],
+            C.quat2mat(rb_states[part_idxs[assemble_to]][env_idx][3:7]),
+        )
+        bulb_pose = C.to_homogeneous(
+            rb_states[part_idxs[self.name]][env_idx][:3],
+            C.quat2mat(rb_states[part_idxs[self.name]][env_idx][3:7]),
+        )
+
+        base_pose = sim_to_april_mat @ base_pose
+        bulb_pose = sim_to_april_mat @ bulb_pose
+
+        margin = rot_mat_tensor(0, -np.pi / 5, 0, ee_pose.device)
+        device = ee_pose.device
+
+        def find_bulb_pose_x_look_front(bulb_pose):
+            best_bulb_pose = bulb_pose.clone()
+            tmp_bulb_pose = bulb_pose
+            rot = rot_mat_tensor(0, -np.pi / 2, 0, device)
+            for i in range(3):
+                tmp_bulb_pose = tmp_bulb_pose @ rot
+                if best_bulb_pose[0, 0] < tmp_bulb_pose[0, 0]:
+                    best_bulb_pose = tmp_bulb_pose
+            return best_bulb_pose
+
+        if self._state == "release":
+            bulb_pose_robot = april_to_robot @ bulb_pose
+            bulb_pose_robot = find_bulb_pose_x_look_front(bulb_pose_robot)
+            base_hole_pose_robot = (
+                    april_to_robot
+                    @ base_pose
+                    @ torch.tensor(
+                get_mat(self.default_assembled_pose[:3, 3], [0.0, 0.0, 0.0]),
+                device=device,
+            )
+            )
+            target_ori = torch.tensor(
+                get_mat([0, 0, 0], [np.pi / 2, 0, np.pi / 4]), device=device
+            )[:3, :3]
+            target_pos = base_hole_pose_robot[:3, 3]
+            target_hole_pose_robot = C.to_homogeneous(target_pos, target_ori)
+
+            rel = rel_rot_mat(bulb_pose_robot, target_hole_pose_robot)
+            target = rel @ ee_pose
+            self.gripper_action = -1
+            if self.gripper_greater(
+                    gripper_width,
+                    config["robot"]["max_gripper_width"]["square_table"] - 0.001,
+            ):
+                next_state = "pre_grasp"
+        elif self._state == "pre_grasp":
+            target_ori = rot_mat_tensor(np.pi, 0, 0, device)[:3, :3]
+            target_pos = (april_to_robot @ bulb_pose[:4, 3])[:3]
+            target_pos[2] += self.grasp_margin_z
+            # target = self.add_noise_first_target(C.to_homogeneous(target_pos, target_ori))
+            target = C.to_homogeneous(target_pos, target_ori)
+            if self.satisfy(ee_pose, target):
+                self.prev_pose = target
+                next_state = "screw_grasp"
+        elif self._state == "screw_grasp":
+            target = self.prev_pose
+            self.gripper_action = 1
+            if self.gripper_less(gripper_width, 2 * self.half_width + 0.001):
+                self.prev_pose = target
+                next_state = "screw"
+        elif self._state == "screw":
+            target_ori = rot_mat_tensor(np.pi, 0, -np.pi / 2 - np.pi / 36, device)[
+                :3, :3
+            ]
+            target_pos = (ee_pos)[:3]
+            target_pos[2] -= 0.005
+            target = C.to_homogeneous(target_pos, target_ori)
+            # print(self.is_screwed_in(rb_states, part_idxs, sim_to_april_mat))
+            if self.satisfy(ee_pose, target, ori_error_threshold=0.3):
+                self.prev_pose = target
+                next_state = "release"
+        else:
+            print("unknown state? ", self._state, env_idx)
         skill_complete = self.may_transit_state(next_state)
 
         return (

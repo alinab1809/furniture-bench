@@ -15,7 +15,7 @@ import furniture_bench.controllers.control_utils as C
 
 class Part(ABC):
     @abstractmethod
-    def __init__(self, part_config, part_idx: int):
+    def __init__(self, part_config, part_idx: int, num_envs=1):
         # Three pose filter. (Each camera has filter.)
         self.pose_filter = [PoseFilter(), PoseFilter(), PoseFilter()]
         self.part_config = copy.deepcopy(part_config)
@@ -32,14 +32,14 @@ class Part(ABC):
         )  # Anchor tag.
 
         self.part_idx = part_idx
-        self.pre_assemble_done = True
+        self.pre_assemble_done = False
         self.pos_error_threshold = 0.01
         self.ori_error_threshold = 0.2
-        self.gripper_action = -1
+        self.gripper_action = np.ones(num_envs, dtype=np.float32) * -1
 
         self.default_assembled_pose = part_config.get("default_assembled_pose", None)
         self.collision_margin = 0.01
-        self.first_setting_target = True
+        self.first_setting_target = 1
         self.target = None
         self.prev_cnt = 0
         self.curr_cnt = 0
@@ -47,6 +47,8 @@ class Part(ABC):
         self.part_attached_skill_idx = part_config.get(
             "part_attached_skill_idx", np.inf
         )
+        self._state = ""
+        self.prev_pose = None
 
     def randomize_init_pose(self, from_skill=0, pos_range=[-0.05, 0.05], rot_range=45):
         self.reset_pos[from_skill][:2] = self.part_config["reset_pos"][from_skill][
@@ -211,8 +213,9 @@ class Part(ABC):
         target,
         pos_error_threshold=None,
         ori_error_threshold=None,
-        max_len=25,
+        max_len=25
     ) -> bool:
+        # print("satisfy counts ", self.curr_cnt, self.prev_cnt)
         if pos_error_threshold is None:
             pos_error_threshold = self.pos_error_threshold
         if ori_error_threshold is None:
@@ -223,8 +226,9 @@ class Part(ABC):
         ):
             return True
         if self.curr_cnt - self.prev_cnt >= max_len:
-            print("phase time out")
+            print("phase time out ", self.curr_cnt, self.prev_cnt, max_len)
             return True
+        # print("ori error: ", (target[:3, :3] - current[:3, :3]).abs().sum())
         return False
 
     def gripper_less(self, gripper_width, target_width, cnt_max=10):
@@ -248,49 +252,72 @@ class Part(ABC):
             self._state = next_state
             if next_state in self.skill_complete_next_states:
                 skill_complete = 1
-            self.first_setting_target = True
+            self.first_setting_target = 1
+            print("changing count to ", self.curr_cnt)
             self.prev_cnt = self.curr_cnt
         self.curr_cnt += 1
         return skill_complete
 
-    def add_noise_first_target(self, target, pos_noise=None, ori_noise=None):
-        if self.state_no_noise():
+    def add_noise_first_target(self, target, pos_noise=None, ori_noise=None, rng=None, torch_rng=None):
+        if self.state_no_noise(): 
             return target
-        if self.first_setting_target:
+        if self.first_setting_target == 1:
             if pos_noise is not None:
                 target[:3, 3] += pos_noise
             else:
-                target[:3, 3] += torch.normal(
-                    mean=torch.zeros((3,)), std=torch.ones((3,)) * 0.003
-                ).to(target.device)
+                if torch_rng is None:
+                    target[:3, 3] += torch.normal(
+                        mean=torch.zeros((3,)), std=torch.ones((3,)) * 0.003
+                    ).to(target.device)
+                else:
+                    target[:3, 3] += torch.normal(
+                        mean=torch.zeros((3,), device=target.device), std=torch.ones((3,), device=target.device) * 0.003, generator=torch_rng
+                    )
             ori = C.mat2quat(target[:3, :3]).to(target.device)
             if ori_noise is not None:
                 ori = C.quat_multiply(ori, ori_noise).to(target.device)
             else:
-                ori = C.quat_multiply(
-                    ori,
-                    torch.tensor(
-                        T.axisangle2quat(
-                            [
-                                np.radians(np.random.normal(0, 3)),
-                                np.radians(np.random.normal(0, 3)),
-                                np.radians(np.random.normal(0, 3)),
-                            ]
+                if rng is None:
+                    ori = C.quat_multiply(
+                        ori,
+                        torch.tensor(
+                            T.axisangle2quat(
+                                [
+                                    np.radians(np.random.normal(0, 3)),
+                                    np.radians(np.random.normal(0, 3)),
+                                    np.radians(np.random.normal(0, 3)),
+                                ]
+                            ),
+                            device=target.device,
                         ),
-                        device=target.device,
-                    ),
-                ).to(target.device)
+                    ).to(target.device)
+                else:
+                    ori = C.quat_multiply(
+                        ori,
+                        torch.tensor(
+                            T.axisangle2quat(
+                                [
+                                    np.radians(rng.normal(0, 3)),
+                                    np.radians(rng.normal(0, 3)),
+                                    np.radians(rng.normal(0, 3)),
+                                ]
+                            ),
+                            device=target.device,
+                        ),
+                    ).to(target.device)
+
             self.target = C.to_homogeneous(target[:3, 3], C.quat2mat(ori))
-            self.first_setting_target = False
+            self.first_setting_target = 0
         return self.target
 
-    def reset(self):
+    def reset(self, worker=None):
+        print("call part reset")
         self.pre_assemble_done = False
         self._state = ""
         self.gripper_action = -1
         self.prev_cnt = 0
         self.curr_cnt = 0
-        self.first_setting_target = True
+        self.first_setting_target = 1
 
     def state_no_noise(self):
         return False
