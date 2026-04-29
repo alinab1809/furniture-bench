@@ -27,11 +27,11 @@ class LampBulb(Leg):
     def reset(self, worker=None):
         super().reset(worker)
         self.prev_pose = None
-        if worker is None:
+        if worker is None or worker == "insert":
             print("set state to bulb_floor_xy", worker)
             self._state = "reach_bulb_floor_xy"
         else:
-            print("set state to pre_grasp, worker")
+            print("set state to pre_grasp", worker)
             self._state = "pre_grasp"
         self.gripper_action = -1.
 
@@ -127,7 +127,8 @@ class LampBulb(Leg):
         def rel_rot_mat(s, t):
             s_inv = torch.linalg.inv(s)
             return t @ s_inv
-
+        if self._state == "screw":
+            self._state = "reach_bulb_floor_xy"
         next_state = self._state
 
         ee_pose = C.to_homogeneous(ee_pos, C.quat2mat(ee_quat))
@@ -258,7 +259,7 @@ class LampBulb(Leg):
                 C.to_homogeneous(target_pos, target_ori)
             )
             if self.satisfy(
-                    ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3, max_len=30
+                    ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3, max_len=40
             ):
                 self.prev_pose = target
                 next_state = "reach_base_xy"
@@ -320,19 +321,22 @@ class LampBulb(Leg):
             # if is_inserted:
             #     next_state = "release"
 
-            # if self.satisfy(
-            #         ee_pose, target, pos_error_threshold=0.000, ori_error_threshold=0.0, max_len=500
-            # ):
-            #     self.prev_pose = target
+            if self.satisfy(
+                    ee_pose, target, pos_error_threshold=0.000, ori_error_threshold=0.0
+            ):
+                next_state = "wait"
         elif self._state == "release":
+            if self.prev_pose is None:
+                self.prev_pose = ee_pose
             target = self.prev_pose
             self.gripper_action = -1
-            if self.gripper_greater(
-                gripper_width,
-                config["robot"]["max_gripper_width"]["lamp"] - 0.001,
-            ):
-                next_state = "done"
+            # if self.gripper_greater(
+            #     gripper_width,
+            #     config["robot"]["max_gripper_width"]["lamp"] - 0.001,
+            # ):
+            #     next_state = "wait"
         else:
+            # print("else block", self._state, next_state)
             target = self.prev_pose
             # next_state = "pre_grasp"
             # print(self.is_inserted(rb_states, part_idxs, sim_to_april_mat))
@@ -443,7 +447,19 @@ class LampBulb(Leg):
                 self.prev_pose = target
                 next_state = "release"
         else:
-            print("unknown state? ", self._state, env_idx)
+            print("unknown state? ", self._state, env_idx, " setting to pre_grasp")
+            self._state = "pre_grasp"
+            next_state = "pre_grasp"
+            target_ori = rot_mat_tensor(np.pi, 0, 0, device)[:3, :3]
+            target_pos = (april_to_robot @ bulb_pose[:4, 3])[:3]
+            target_pos[2] += self.grasp_margin_z
+            # target = self.add_noise_first_target(C.to_homogeneous(target_pos, target_ori))
+            target = C.to_homogeneous(target_pos, target_ori)
+            print(ee_pos, ee_quat, target_pos, target_ori)
+            if self.satisfy(ee_pose, target):
+                self.prev_pose = target
+                next_state = "screw_grasp"
+
         skill_complete = self.may_transit_state(next_state)
 
         return (
@@ -709,6 +725,7 @@ class LampBulb(Leg):
             if self.satisfy(ee_pose, target, ori_error_threshold=0.3):
                 self.prev_pose = target
                 next_state = "release"
+
 
         skill_complete = self.may_transit_state(next_state)
 

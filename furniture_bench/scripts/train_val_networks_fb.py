@@ -1,5 +1,6 @@
 import copy
 import random
+import shutil
 
 import wandb
 import torch
@@ -415,7 +416,7 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
     if not pointcloud:
         dataset = ValuationDataset(data_path, furniture, task=network_name)
     else:
-        mesh_dir = "~/code/furniture-bench/furniture_bench/assets/furniture/mesh"
+        mesh_dir = "~/code/optionatari/furniture-bench/furniture_bench/assets/furniture/mesh"
         dataset = PointCloudValuationDataset(data_path, furniture, mesh_dir=mesh_dir, task=network_name)
 
     train_size = int(0.8 * len(dataset))
@@ -454,7 +455,7 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
         furnitre_str += f"{item}_"
     wandb.run.name = f"fb_{furnitre_str}pc{pointcloud}_{network_name}_bs{bs}_lr{lr}"
     dir_name = "pc" if pointcloud else "mlp"
-    checkpoint_dir = data_path / "checkpoints" / dir_name / furnitre_str
+    checkpoint_dir = data_path / "checkpoints" / dir_name / furnitre_str / network_name
     os.makedirs(checkpoint_dir, exist_ok=True)
 
     train_loader = DataLoader(train_dataset, batch_size=bs, sampler=train_sampler)
@@ -568,10 +569,71 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
 
     print(f"Final: Epoch {epoch + 1} | Loss: {avg_loss:.6f}")
     # Save checkpoint
+    if os.path.exists(checkpoint_dir / "latest.pt"):
+        os.rename(checkpoint_dir / "latest.pt", checkpoint_dir / "old_latest.pt")
+    print(os.listdir(checkpoint_dir))
     torch.save(network.state_dict(), checkpoint_dir / "latest.pt")
     print(f"Finished {network_name} pretraining.")
     wandb.finish()
+    shutil.rmtree("wandb/")
 
+def eval_only(data_path, network, network_name):
+    torch.manual_seed(42)
+    np.random.seed(42)
+    random.seed(42)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    network.to(device)
+
+    if not pointcloud:
+        dataset = ValuationDataset(data_path, furniture, task=network_name)
+    else:
+        mesh_dir = "~/code/optionatari/furniture-bench/furniture_bench/assets/furniture/mesh"
+        dataset = PointCloudValuationDataset(data_path, furniture, mesh_dir=mesh_dir, task=network_name)
+
+    train_size = int(0.8 * len(dataset))
+    test_size = len(dataset) - train_size
+    generator = torch.Generator().manual_seed(42)  # for reproducibility
+    train_dataset, test_dataset = random_split(dataset, [train_size, test_size], generator=generator)
+    bs = 4
+
+    test_loader = DataLoader(test_dataset, batch_size=bs, shuffle=False)
+    network.eval()
+    loss_eval = 0
+    successes_eval = {"all": 0, "1": 0, "0": 0}
+    num_samples_eval = {"all": 0, "1": 0, "0": 0}
+    for batch in test_loader:
+        with torch.no_grad():
+            x = batch["x"].to(device)
+            y = batch["y"].to(device).float()
+
+            # Forward
+            out = network(x)
+
+            preds = out > 0.5
+            targets = y > 0.5
+
+            # 2. Compare them and sum the matches
+            # .item() converts the single-value tensor to a Python integer
+            successes_eval["all"] += (preds == targets).sum().item()
+            num_samples_eval["all"] += y.size(0)
+            pos_mask = (targets == 1)
+            num_pos = pos_mask.sum().item()
+            if num_pos > 0:
+                successes_eval["1"] += (preds[pos_mask] == targets[pos_mask]).sum().item()
+                num_samples_eval["1"] += num_pos
+
+            neg_mask = (targets == 0)
+            num_neg = neg_mask.sum().item()
+
+            if num_neg > 0:
+                successes_eval["0"] += (preds[neg_mask] == targets[neg_mask]).sum().item()
+                num_samples_eval["0"] += num_neg
+
+    acc_all = successes_eval["all"] / num_samples_eval["all"] if num_samples_eval["all"] > 0 else 0
+    acc_pos = successes_eval["1"] / num_samples_eval["1"] if num_samples_eval["1"] > 0 else 0
+    acc_neg = successes_eval["0"] / num_samples_eval["0"] if num_samples_eval["0"] > 0 else 0
+    print(acc_all, acc_pos, acc_neg)
 
 def inspect_dataset(file_path, demo_idx=0, num_samples=25):
     # In your inspect_dataset function
@@ -635,10 +697,15 @@ if __name__ == "__main__":
     parser.add_argument("--pc", action="store_true")
     args = parser.parse_args()
     pointcloud = args.pc
-    task = "is_screwed_in"
+    task = "is_inserted"
     if pointcloud:
         network = PointNet()
     else:
         network = ValNet(task)
     furniture = ["lamp", "one_leg", "round_table"]
-    train_single_network(Path("./"), network_name=task, network=network, furniture=furniture, pointcloud=pointcloud)
+    # train_single_network(Path("./"), network_name=task, network=network, furniture=furniture, pointcloud=pointcloud)
+
+    state_dict = torch.load("checkpoints/pc/lamp_one_leg_round_table_/is_inserted/latest.pt")
+    network.load_state_dict(state_dict)
+    eval_only(Path("./"), network, task)
+
