@@ -32,7 +32,7 @@ class Part(ABC):
         )  # Anchor tag.
 
         self.part_idx = part_idx
-        self.pre_assemble_done = False
+        self.pre_assemble_done = True
         self.pos_error_threshold = 0.01
         self.ori_error_threshold = 0.2
         self.gripper_action = np.ones(num_envs, dtype=np.float32) * -1
@@ -189,6 +189,7 @@ class Part(ABC):
 
     def is_in_reset_pos(self, pose, from_skill, pos_threshold):
         """check whether (x, y) position is in reset position."""
+        print("is in reset")
         reset_pos = self.reset_pos[from_skill][:2]
         part_pos = np.array(reset_pos)
         detected_pos = np.array(pose[:2, 3])
@@ -197,6 +198,7 @@ class Part(ABC):
         )
 
     def assemble_done(self, rel_pose, assembled_rel_poses):
+        print("assemble done")
         for assembled_rel_pose in assembled_rel_poses:
             if is_similar_pose(
                 assembled_rel_pose,
@@ -253,7 +255,7 @@ class Part(ABC):
             if next_state in self.skill_complete_next_states:
                 skill_complete = 1
             self.first_setting_target = 1
-            print("changing count to ", self.curr_cnt)
+            # print("changing count to ", self.curr_cnt)
             self.prev_cnt = self.curr_cnt
         self.curr_cnt += 1
         return skill_complete
@@ -312,7 +314,7 @@ class Part(ABC):
 
     def reset(self, worker=None):
         print("call part reset")
-        self.pre_assemble_done = False
+        self.pre_assemble_done = True
         self._state = ""
         self.gripper_action = -1
         self.prev_cnt = 0

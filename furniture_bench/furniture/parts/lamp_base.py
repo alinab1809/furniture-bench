@@ -77,18 +77,6 @@ class LampBase(Part):
         base_pose = sim_to_april_mat @ base_pose
         device = base_pose.device
 
-        if "push" in self._state:
-            obstacle_x = 0
-            obstacle_y = 0
-            for name in ["obstacle_front", "obstacle_right", "obstacle_left"]:
-                obstacle_pos = torch.cat(
-                    [
-                        rb_states[part_idxs[name]][env_idx][:3],
-                        torch.tensor([1.0], device=device),
-                    ]
-                )
-                obstacle_x = max(obstacle_pos[0], obstacle_x)
-                obstacle_y = max(obstacle_pos[1], obstacle_y)
         # if self._state == "reach_body_grasp_xy":
         #     rot = (
         #             torch.tensor(rot_mat([-np.pi / 2, 0, np.pi / 2], hom=True))
@@ -186,8 +174,7 @@ class LampBase(Part):
             target_pos[2] = ee_pos[2]
             # target_ori = @ target_ori
             target = C.to_homogeneous(target_pos, target_ori)
-            if self.satisfy(ee_pose, target, max_len=40):
-                print("switch to go down ", ee_pos, target_pos)
+            if self.satisfy(ee_pose, target):
                 self.prev_pose = target
                 next_state = "reach_body_grasp_z"
         elif self._state == "reach_body_grasp_z":
@@ -198,7 +185,6 @@ class LampBase(Part):
             target = C.to_homogeneous(target_pos, target_ori)
 
             if self.satisfy(ee_pose, target):
-                print("switching to pick ", ee_pos, target_pos)
                 self.prev_pose = target
                 next_state = "pick_body"
         elif self._state == "pick_body":
@@ -211,7 +197,12 @@ class LampBase(Part):
             self._state == "push_x"
         ):  # Push to the forward so that it doesn't collide with the lamp bulb.
             target_pos = self.prev_pose[:3, 3].clone()
-            if abs(obstacle_x - base_pos[0]) > 0.15:
+            max_x = 0
+            for name in ["obstacle_front", "obstacle_right", "obstacle_left"]:
+                obstacle_x = rb_states[part_idxs[name]][env_idx][0]
+                max_x = max(obstacle_x, max_x)
+            x_dist = abs(base_pos[0] - max_x)
+            if x_dist > 0.10:
                 target_pos[0] += 0.10  # 10cm.
             target_ori = self.prev_pose[:3, :3]
             target = C.to_homogeneous(target_pos, target_ori)
@@ -222,8 +213,15 @@ class LampBase(Part):
         elif self._state == "push":
             target_pos = torch.zeros((4,), device=device)
             target_pos[-1] = 1
-            target_pos[0] = obstacle_x
-            target_pos[1] = obstacle_y
+            for name in ["obstacle_front", "obstacle_right", "obstacle_left"]:
+                obstacle_pos = torch.cat(
+                    [
+                        rb_states[part_idxs[name]][env_idx][:3],
+                        torch.tensor([1.0], device=device),
+                    ]
+                )
+                target_pos[0] = max(obstacle_pos[0], target_pos[0])
+                target_pos[1] = max(obstacle_pos[1], target_pos[1])
             target_pos = april_to_robot @ sim_to_april_mat @ target_pos
             target_pos[0] -= self.half_length * 2
             target_pos[1] -= self.half_length   # Margin 2cm
@@ -403,7 +401,7 @@ class LampBase(Part):
             if self.gripper_greater(
                 gripper_width,
                 config["robot"]["max_gripper_width"]["square_table"] - 0.001,
-                cnt_max=30,
+                cnt_max=40,
             ):
                 next_state = "go_up"
         if self._state == "go_up":

@@ -93,9 +93,7 @@ def comp_avg_pose(poses):
 def is_similar_pose(pose1, pose2, ori_bound=0.99, pos_threshold=[0.01, 0.007, 0.007]):
     """Check if two poses are similar."""
     similar_rot = is_similar_rot(pose1[:3, :3], pose2[:3, :3], ori_bound)
-
     similar_pos = is_similar_pos(pose1[:3, 3], pose2[:3, 3], pos_threshold)
-
     return similar_rot and similar_pos
 
 

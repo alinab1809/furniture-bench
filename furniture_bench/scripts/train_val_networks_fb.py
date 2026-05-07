@@ -185,7 +185,7 @@ class PointCloudValuationDataset(Dataset):
                 self.moving_mesh_points[item] = self._load_mesh(f"{mesh_dir}/{item}/{item}_leg.obj")
 
             # 2. Load the Poses from H5
-            file_path = data_dir / f"{item}_rawpose_dataset_1.h5"
+            file_path = data_dir / f"{item}_rawpose_dataset.h5"
             if not os.path.exists(file_path):
                 continue
 
@@ -203,11 +203,12 @@ class PointCloudValuationDataset(Dataset):
                         # Standard moving_pose (7 dims)
                         moving = group["moving_pose"][:]
                         labels = group[self.task][:]
-                        labels_dist = group["is_inserted_dist"][:]
-                        indices_to_use = labels == labels_dist
-                        base = base[indices_to_use]
-                        moving = moving[indices_to_use]
-                        labels = labels[indices_to_use]
+                        if self.task == "is_inserted":
+                            labels_dist = group["is_inserted_dist"][:]
+                            indices_to_use = labels == labels_dist
+                            base = base[indices_to_use]
+                            moving = moving[indices_to_use]
+                            labels = labels[indices_to_use]
 
                     combined = np.hstack((base, moving))
                     # multiple demos with low randomness in start position -> we might have redundant samples
@@ -222,6 +223,7 @@ class PointCloudValuationDataset(Dataset):
         self.base_poses = np.concatenate(all_base_poses, axis=0)
         self.moving_poses = np.concatenate(all_moving_poses, axis=0)  # Can be (N, 7) or (N, 21)
         self.y = np.concatenate(all_y, axis=0)
+        print(self.y.shape)
         self.sample_type = np.array(self.sample_type)
 
     def __getitem__(self, idx):
@@ -309,6 +311,7 @@ def visualize_model_predictions(model, dataloader, num_samples=3, device=torch.d
         preds = model(inputs)
 
     # 3. Pick random indices
+    print(len(inputs))
     indices = np.random.choice(len(inputs), num_samples, replace=False)
     visualized = 0
     for idx in range(len(inputs)):
@@ -443,7 +446,6 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
     )
 
     # 3. Hyperparameters
-    # For to_platform (12 points), we use a tiny batch size.
     bs = 128
     lr = 5e-3 if not pointcloud else 1e-3
 
@@ -595,7 +597,7 @@ def eval_only(data_path, network, network_name):
     test_size = len(dataset) - train_size
     generator = torch.Generator().manual_seed(42)  # for reproducibility
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size], generator=generator)
-    bs = 4
+    bs = 128
 
     test_loader = DataLoader(test_dataset, batch_size=bs, shuffle=False)
     network.eval()
@@ -634,6 +636,8 @@ def eval_only(data_path, network, network_name):
     acc_pos = successes_eval["1"] / num_samples_eval["1"] if num_samples_eval["1"] > 0 else 0
     acc_neg = successes_eval["0"] / num_samples_eval["0"] if num_samples_eval["0"] > 0 else 0
     print(acc_all, acc_pos, acc_neg)
+    print(num_samples_eval, num_samples_eval["1"])
+    visualize_model_predictions(network, test_loader, num_samples=10, device=device, pc=pointcloud)
 
 def inspect_dataset(file_path, demo_idx=0, num_samples=25):
     # In your inspect_dataset function
@@ -697,15 +701,14 @@ if __name__ == "__main__":
     parser.add_argument("--pc", action="store_true")
     args = parser.parse_args()
     pointcloud = args.pc
-    task = "is_inserted"
+    task = "is_screwed_in"
     if pointcloud:
         network = PointNet()
     else:
         network = ValNet(task)
-    furniture = ["lamp", "one_leg", "round_table"]
-    # train_single_network(Path("./"), network_name=task, network=network, furniture=furniture, pointcloud=pointcloud)
+    furniture = ["lamp"]
+    train_single_network(Path("./"), network_name=task, network=network, furniture=furniture, pointcloud=pointcloud)
 
-    state_dict = torch.load("checkpoints/pc/lamp_one_leg_round_table_/is_inserted/latest.pt")
+    state_dict = torch.load("checkpoints/pc/lamp_/is_screwed_in/latest.pt")
     network.load_state_dict(state_dict)
     eval_only(Path("./"), network, task)
-

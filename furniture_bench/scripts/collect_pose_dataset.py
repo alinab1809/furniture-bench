@@ -15,7 +15,7 @@ from PIL import Image
 
 
 class PoseDataCollector:
-    def __init__(self, furniture="lamp", data_path="_rawpose_dataset_1.h5"):
+    def __init__(self, furniture="lamp", data_path="_rawpose_dataset.h5"):
         data_path = furniture + data_path
         self.device = "cuda" if torch.cuda.is_available() else "cpu"
         self.furniture = furniture
@@ -387,6 +387,7 @@ class PoseDataCollector:
                             print("SCREW LABEL SWITCHED ", screwed_label)
                         screwed_label_ds.resize((step_idx + 1,))
                         screwed_label_ds[step_idx] = screwed_label
+                        print("done: screwed ", screwed_label)
 
 
                 if failed_validation:
@@ -450,7 +451,7 @@ class PoseDataCollector:
                     # Combine images side-by-side
                     # Note: They must have the same height.
                     combined_img = np.hstack((img1_bgr, img2_bgr))
-                    print(combined_img.shape)
+                    # print(combined_img.shape)
 
                     # Overlay status text on the combined frame
                     color = (255, 0, 0)

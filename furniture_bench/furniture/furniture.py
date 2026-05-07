@@ -64,6 +64,7 @@ class Furniture(ABC):
         # Check whether the furniture is assembled.
         # If the value is smaller than these thresholds, we consider the furniture is assembled.
         self.assembled_pos_threshold = config["furniture"]["assembled_pos_threshold"]
+        print('set pos threshold', self.assembled_pos_threshold)
 
     def randomize_init_pose(
         self, from_skill, pos_range=[-0.05, 0.05], rot_range=45
@@ -466,13 +467,13 @@ class Furniture(ABC):
 
         return False
 
-    def assembled(self, rel_pose, assembled_rel_poses):
+    def assembled(self, rel_pose, assembled_rel_poses, pos_threshold=None):
         for assembled_rel_pose in assembled_rel_poses:
             if is_similar_pose(
                 assembled_rel_pose,
                 rel_pose,
                 ori_bound=self.ori_bound,
-                pos_threshold=self.assembled_pos_threshold,
+                pos_threshold=self.assembled_pos_threshold if pos_threshold is None else pos_threshold,
             ):
                 return True
 

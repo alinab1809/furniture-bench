@@ -27,6 +27,7 @@ class Lamp(Furniture):
         self.position_only.add((0, 2))
 
         self.should_assembled_first[(0, 2)] = (0, 1)
+        self.ori_bound = 0.6 # 0.995 for data collection
 
         self.assembled_rel_poses[(0, 1)] = [
             get_mat([0, -0.0678, 0], [0, 0, np.pi]),
