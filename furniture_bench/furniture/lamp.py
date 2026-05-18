@@ -9,17 +9,17 @@ from furniture_bench.config import config
 
 
 class Lamp(Furniture):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, env_idx):
+        super().__init__(env_idx)
         self.name = "lamp"
         furniture_conf = config["furniture"]["lamp"]
         self.furniture_conf = furniture_conf
 
         self.tag_size = furniture_conf["tag_size"]
         self.parts = [
-            LampBase(furniture_conf["lamp_base"], 0),
-            LampBulb(furniture_conf["lamp_bulb"], 1),
-            LampHood(furniture_conf["lamp_hood"], 2),
+            LampBase(furniture_conf["lamp_base"], 0, env_idx),
+            LampBulb(furniture_conf["lamp_bulb"], 1, env_idx),
+            LampHood(furniture_conf["lamp_hood"], 2, env_idx),
         ]
         self.num_parts = len(self.parts)
 
@@ -35,3 +35,4 @@ class Lamp(Furniture):
         self.assembled_rel_poses[(0, 2)] = [
             get_mat([0, -0.088324, 0], [0, 0, 0]),
         ]
+        self.env_idx = env_idx

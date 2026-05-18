@@ -20,7 +20,7 @@ from furniture_bench.furniture.parts.obstacle_left import ObstacleLeft
 
 
 class Furniture(ABC):
-    def __init__(self):
+    def __init__(self, env_idx):
         self.parts: List[Part] = []
         self.num_parts = len(self.parts)
 
@@ -65,6 +65,7 @@ class Furniture(ABC):
         # If the value is smaller than these thresholds, we consider the furniture is assembled.
         self.assembled_pos_threshold = config["furniture"]["assembled_pos_threshold"]
         print('set pos threshold', self.assembled_pos_threshold)
+        self.env_idx = env_idx
 
     def randomize_init_pose(
         self, from_skill, pos_range=[-0.05, 0.05], rot_range=45

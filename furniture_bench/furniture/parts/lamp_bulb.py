@@ -12,13 +12,13 @@ import furniture_bench.utils.transform as T
 
 
 class LampBulb(Leg):
-    def __init__(self, part_config, part_idx):
+    def __init__(self, part_config, part_idx, env_idx):
         self.half_width = 0.0175
         self.tag_offset = 0.0175
         self.reset_x_len = 0.057
         self.reset_y_len = 0.13
 
-        super().__init__(part_config, part_idx)
+        super().__init__(part_config, part_idx, env_idx=env_idx)
 
         self.reset_gripper_width = 0.07
         self.grasp_margin_x = 0.043
@@ -170,7 +170,7 @@ class LampBulb(Leg):
             # target_pos[1] += 0.01
             target = self.add_noise_first_target(
                 C.to_homogeneous(target_pos, target_ori),
-                ori_noise=torch.tensor([0, 0, 0, 1], device=device),
+                ori_noise=torch.tensor([0, 0, 0, 1], device=device), torch_rng=torch_rng,
             )
             if self.satisfy(ee_pose, target, pos_error_threshold=0.02):
                 self.prev_pose = target.clone()
@@ -232,7 +232,7 @@ class LampBulb(Leg):
             )
             target_ori = ee_pose[:3, :3]
             target = self.add_noise_first_target(
-                C.to_homogeneous(target_pos, target_ori)
+                C.to_homogeneous(target_pos, target_ori), torch_rng=torch_rng
             )
             if self.satisfy(
                     ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3
@@ -243,7 +243,7 @@ class LampBulb(Leg):
             target_pos = torch.tensor([0.5, 0.10, 0.17], device=device)
             target_ori = self.prev_pose[:3, :3]
             target = self.add_noise_first_target(
-                C.to_homogeneous(target_pos, target_ori)
+                C.to_homogeneous(target_pos, target_ori), torch_rng=torch_rng
             )
             if self.satisfy(
                     ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3

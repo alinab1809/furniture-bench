@@ -10,8 +10,8 @@ import furniture_bench.controllers.control_utils as C
 
 
 class Leg(Part):
-    def __init__(self, part_config, part_idx):
-        super().__init__(part_config, part_idx)
+    def __init__(self, part_config, part_idx, env_idx=0):
+        super().__init__(part_config, part_idx, env_idx=env_idx)
         tag_ids = part_config["ids"]
 
         self.rel_pose_from_center[tag_ids[0]] = get_mat(

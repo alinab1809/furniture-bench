@@ -15,7 +15,7 @@ import furniture_bench.controllers.control_utils as C
 
 class Part(ABC):
     @abstractmethod
-    def __init__(self, part_config, part_idx: int, num_envs=1):
+    def __init__(self, part_config, part_idx: int, num_envs=1, env_idx=0):
         # Three pose filter. (Each camera has filter.)
         self.pose_filter = [PoseFilter(), PoseFilter(), PoseFilter()]
         self.part_config = copy.deepcopy(part_config)
@@ -49,15 +49,16 @@ class Part(ABC):
         )
         self._state = ""
         self.prev_pose = None
+        self.rng = np.random.RandomState(seed=env_idx)
 
     def randomize_init_pose(self, from_skill=0, pos_range=[-0.05, 0.05], rot_range=45):
         self.reset_pos[from_skill][:2] = self.part_config["reset_pos"][from_skill][
             :2
-        ] + np.random.uniform(
+        ] + np.random.uniform( # self.rng.uniform(
             pos_range[0], pos_range[1], size=2
         )  # x, y
         self.mut_ori = rot_mat(
-            [0, 0, np.random.uniform(np.radians(-rot_range), np.radians(rot_range))],
+            [0, 0, np.random.uniform(np.radians(-rot_range), np.radians(rot_range))], # self.rng.uniform(np.radians(-rot_range), np.radians(rot_range))],
             hom=True,
         )
         self.reset_ori[from_skill] = (
@@ -273,8 +274,8 @@ class Part(ABC):
                     ).to(target.device)
                 else:
                     target[:3, 3] += torch.normal(
-                        mean=torch.zeros((3,), device=target.device), std=torch.ones((3,), device=target.device) * 0.003, generator=torch_rng
-                    )
+                        mean=torch.zeros((3,)), std=torch.ones((3,)) * 0.003, generator=torch_rng
+                    ).to(target.device)
             ori = C.mat2quat(target[:3, :3]).to(target.device)
             if ori_noise is not None:
                 ori = C.quat_multiply(ori, ori_noise).to(target.device)

@@ -9,8 +9,8 @@ from furniture_bench.config import config
 
 
 class LampHood(Part):
-    def __init__(self, part_config, part_idx):
-        super().__init__(part_config, part_idx)
+    def __init__(self, part_config, part_idx, env_idx):
+        super().__init__(part_config, part_idx, env_idx=env_idx)
         self.assembled_rel_poses = [
             get_mat([0, 0.094, 0], [0, 0, 0]),
             get_mat([0, 0.085, 0], [0, 0, 0]),

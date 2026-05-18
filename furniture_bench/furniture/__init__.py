@@ -10,7 +10,7 @@ from furniture_bench.furniture.desk import Desk
 from furniture_bench.furniture.lamp import Lamp
 
 
-def furniture_factory(furniture: str) -> Furniture:
+def furniture_factory(furniture: str, env_idx) -> Furniture:
     if furniture == "square_table":
         return SquareTable()
     elif furniture == "desk":
@@ -22,7 +22,7 @@ def furniture_factory(furniture: str) -> Furniture:
     elif furniture == "chair":
         return Chair()
     elif furniture == "lamp":
-        return Lamp()
+        return Lamp(env_idx)
     elif furniture == "cabinet":
         return Cabinet()
     elif furniture == "stool":

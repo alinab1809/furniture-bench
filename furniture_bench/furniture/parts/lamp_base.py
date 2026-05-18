@@ -9,8 +9,8 @@ import furniture_bench.controllers.control_utils as C
 
 
 class LampBase(Part):
-    def __init__(self, part_config, part_idx):
-        super().__init__(part_config, part_idx)
+    def __init__(self, part_config, part_idx, env_idx):
+        super().__init__(part_config, part_idx, env_idx=env_idx)
 
         self.assembled_rel_poses = [get_mat([0, -0.073, 0], [0, 0, np.pi])]
 
@@ -63,8 +63,8 @@ class LampBase(Part):
         part_idxs,
         sim_to_april_mat,
         april_to_robot,
-        env_idx=0
-                    ):
+        env_idx=0,
+        torch_rng=None):
         next_state = self._state
 
         ee_pose = C.to_homogeneous(ee_pos, C.quat2mat(ee_quat))
@@ -77,86 +77,6 @@ class LampBase(Part):
         base_pose = sim_to_april_mat @ base_pose
         device = base_pose.device
 
-        # if self._state == "reach_body_grasp_xy":
-        #     rot = (
-        #             torch.tensor(rot_mat([-np.pi / 2, 0, np.pi / 2], hom=True))
-        #             .float()
-        #             .to(base_pose.device)
-        #             @ base_pose[:4, :4]
-        #     )
-        #     pos = base_pose[:3, 3] + torch.tensor([0.00, 0.00, 0.03]).float().to(
-        #         base_pose.device
-        #     )
-        #     pos = torch.concat([pos, torch.tensor([1.0]).float().to(base_pose.device)])
-        #
-        #     target_pos = (april_to_robot @ pos)[:3]
-        #     target_ori = (april_to_robot @ rot)[:3, :3]
-        #     target_pos[2] = ee_pos[2]
-        #     # target_ori = @ target_ori
-        #     target = C.to_homogeneous(target_pos, target_ori)
-        #     if self.satisfy(ee_pose, target, max_len=50):
-        #         self.prev_pose = target
-        #         next_state = "reach_body_grasp_z"
-        # elif self._state == "reach_body_grasp_z":
-        #     target_pos = self.prev_pose[:3, 3]
-        #     target_pos[2] = (april_to_robot @ base_pose)[2, 3]
-        #     target_pos[2] += 0.04
-        #     target_ori = self.prev_pose[:3, :3]
-        #     target = C.to_homogeneous(target_pos, target_ori)
-        #
-        #     if self.satisfy(ee_pose, target, max_len=50):
-        #         self.prev_pose = target
-        #         next_state = "pick_body"
-        # elif self._state == "pick_body":
-        #     target = self.prev_pose
-        #     self.gripper_action = 1
-        #     if self.gripper_less(gripper_width, self.base_grip_width, cnt_max=15):
-        #         self.prev_pose = target
-        #         next_state = "push_x"
-        # elif (
-        #         self._state == "push_x"
-        # ):  # Push to the forward so that it doesn't collide with the lamp bulb.
-        #     target_pos = self.prev_pose[:3, 3].clone()
-        #     target_pos[0] += 0.10  # 10cm.
-        #     target_ori = self.prev_pose[:3, :3]
-        #     target = C.to_homogeneous(target_pos, target_ori)
-        #
-        #     if self.satisfy(ee_pose, target):
-        #         self.prev_pose = target
-        #         next_state = "push"
-        # elif self._state == "push":
-        #     target_pos = torch.zeros((4,), device=device)
-        #     target_pos[-1] = 1
-        #     for name in ["obstacle_front", "obstacle_right", "obstacle_left"]:
-        #         obstacle_pos = torch.cat(
-        #             [
-        #                 rb_states[part_idxs[name]][env_idx][:3],
-        #                 torch.tensor([1.0], device=device),
-        #             ]
-        #         )
-        #         target_pos[0] = max(obstacle_pos[0], target_pos[0])
-        #         target_pos[1] = max(obstacle_pos[1], target_pos[1])
-        #     target_pos = april_to_robot @ sim_to_april_mat @ target_pos
-        #     target_pos[0] -= self.half_length * 2
-        #     target_pos[1] -= self.half_length  # Margin 2cm
-        #     target_pos[2] = ee_pose[2, 3]  # Keep z the same.
-        #     target_pos = target_pos[:3]
-        #     target_ori = self.prev_pose[:3, :3]
-        #
-        #     target = self.add_noise_first_target(
-        #         C.to_homogeneous(target_pos, target_ori),
-        #         pos_noise=torch.normal(
-        #             mean=torch.zeros((3,)), std=torch.tensor([0.005, 0.005, 0.0])
-        #         ).to(device),
-        #     )
-        #     # if self.satisfy(
-        #     #         ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.5
-        #     # ):
-        #     #     self.prev_pose = target
-        #     #     self.gripper_action = -1
-        #     #     next_state = "release"
-        #     #     print("IS IN CORNER ", self.is_object_in_corner(rb_states, part_idxs, sim_to_april_mat, april_to_robot))
-        #
         if self._state == "reach_body_grasp_xy":
             rot = (
                 torch.tensor(rot_mat([-np.pi / 2, 0, np.pi / 2], hom=True))
@@ -232,7 +152,7 @@ class LampBase(Part):
             target = self.add_noise_first_target(
                 C.to_homogeneous(target_pos, target_ori),
                 pos_noise=torch.normal(
-                    mean=torch.zeros((3,)), std=torch.tensor([0.005, 0.005, 0.0])
+                    mean=torch.zeros((3,)), std=torch.tensor([0.005, 0.005, 0.0]), generator=torch_rng
                 ).to(device),
             )
             if self.satisfy(
