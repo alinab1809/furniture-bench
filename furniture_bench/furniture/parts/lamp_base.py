@@ -159,7 +159,7 @@ class LampBase(Part):
                 ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.5
             ):
                 self.prev_pose = target
-                self.gripper_action = -1
+                # self.gripper_action = -1
                 next_state = "wait"
         else:
             target = ee_pose
@@ -213,7 +213,13 @@ class LampBase(Part):
         current_ori = body_pose_robot[:3, :3]
 
         ori_error = (current_ori - target_ori_robot).abs().sum()
-        return pos_error < pos_threshold and ori_error < ori_threshold, pos_error
+
+        local_y_in_robot = current_ori[:, 1]
+        current_vertical_component = local_y_in_robot[2]  # Get its Z-axis value
+
+        # Target value is -1.0. Calculate the absolute deviation from being upright.
+        flipped = (current_vertical_component - (-1.0)).abs() > 0.1
+        return pos_error < pos_threshold and ori_error < ori_threshold, pos_error, flipped
 
     def pre_assemble(
         self,
