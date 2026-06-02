@@ -25,6 +25,7 @@ class ValNet(nn.Module):
         self.mlp = nn.Sequential(
             nn.Linear(in_dim, 32),
             nn.ReLU(),
+            nn.Dropout(0.15),
             # nn.Linear(32, 32),
             # nn.ReLU(),
             nn.Linear(32, 1),
@@ -63,9 +64,11 @@ class PointNet(nn.Module):
             nn.Linear(1024, 512),
             nn.BatchNorm1d(512),
             nn.ReLU(),
+            nn.Dropout(p=0.2),
             nn.Linear(512, 256),
             nn.BatchNorm1d(256),
             nn.ReLU(),
+            nn.Dropout(p=0.2),
             nn.Linear(256, 1),
             nn.Sigmoid()
         )
@@ -81,7 +84,7 @@ class ValuationDataset(Dataset):
         ys = []
 
         for item in furniture:
-            path = data_path / f"{item}_rawpose_dataset_1.h5"
+            path = data_path / f"{item}_rawpose_dataset.h5"
             if not os.path.exists(path):
                 print(f"⚠️ Warning: File {path} not found. Skipping.")
                 continue
@@ -143,6 +146,7 @@ class ValuationDataset(Dataset):
 
     def __getitem__(self, idx):
         return {"x": self.x[idx], "y": 0.99 if self.y[idx] == 1 else 0.01}
+        # return {"x": self.x[idx], "y": self.y[idx]}
 
 
 class PointCloudValuationDataset(Dataset):
@@ -192,6 +196,7 @@ class PointCloudValuationDataset(Dataset):
             with h5py.File(file_path, "r") as f:
                 for g_name in f.keys():
                     group = f[g_name]
+                    print(group["base_pose"].shape, group["moving_pose"].shape, group["is_screwed_in"].shape)
                     base = group["base_pose"][:]
 
                     # Logic switch for input types
@@ -224,7 +229,9 @@ class PointCloudValuationDataset(Dataset):
         self.moving_poses = np.concatenate(all_moving_poses, axis=0)  # Can be (N, 7) or (N, 21)
         self.y = np.concatenate(all_y, axis=0)
         print(self.y.shape)
+        print(len(self.sample_type))
         self.sample_type = np.array(self.sample_type)
+        print(self.sample_type.shape)
 
     def __getitem__(self, idx):
         f_type = self.sample_type[idx]
@@ -263,6 +270,11 @@ class PointCloudValuationDataset(Dataset):
         scene_pc = torch.cat([p_base, p_moving], dim=0)
         scene_pc -= p_base.mean(dim=0)  # Zero-center
         scene_pc = scene_pc.transpose(0, 1)
+
+        # raw_label = self.y[idx]
+        # raw_moving = self.moving_poses[idx]
+        # raw_base = self.base_poses[idx]
+        # print(f"idx={idx}, label={raw_label}, base_pos={raw_base[:3]}, moving_pos={raw_moving[:3]}")
 
         label = 0.99 if self.y[idx] == 1 else 0.01
         return {"x": scene_pc, "y": label}
@@ -408,10 +420,7 @@ def to_single_mesh(loaded_geometry):
         ])
     return loaded_geometry
 
-def train_single_network(data_path, network_name, network, furniture, pointcloud=False):
-    torch.manual_seed(42)
-    np.random.seed(42)
-    random.seed(42)
+def train_single_network(data_path, network_name, network, furniture, pointcloud=False, seed=0):
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     network.to(device)
@@ -424,8 +433,10 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
 
     train_size = int(0.8 * len(dataset))
     test_size = len(dataset) - train_size
-    generator = torch.Generator().manual_seed(42)  # for reproducibility
-    train_dataset, test_dataset = random_split(dataset, [train_size, test_size], generator=generator)
+    torch_rng = torch.Generator()
+    torch_rng.manual_seed(seed)
+
+    train_dataset, test_dataset = random_split(dataset, [train_size, test_size], generator=torch_rng)
 
     train_indices = train_dataset.indices
     train_labels = dataset.y[train_indices].flatten()
@@ -436,33 +447,52 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
     ])
     print(f"Train class samples neg/pos: {class_sample_count}")
 
+    test_labels = dataset.y[test_dataset.indices].flatten()
+
+    class_sample_count_test = torch.tensor([
+        (test_labels < 0.5).sum(),
+        (test_labels > 0.5).sum()
+    ])
+    print(f"Test class samples neg/pos: {class_sample_count_test}")
     weights = 1. / class_sample_count.float()
     train_samples_weights = torch.tensor([weights[1] if t > 0.5 else weights[0] for t in train_labels])
 
     train_sampler = WeightedRandomSampler(
         weights=train_samples_weights,
         num_samples=len(train_samples_weights),
-        replacement=True
+        replacement=True,
+        generator=torch_rng
     )
 
     # 3. Hyperparameters
     bs = 128
-    lr = 5e-3 if not pointcloud else 1e-3
+    if not pointcloud:
+        lr = 5e-3
+        if task != "is_in_corner":
+            epochs = 100
+        else:
+            epochs = 900
+    else:
+        if task != "is_in_corner":
+            lr = 1e-4
+            epochs = 50
+        else:
+            lr = 1e-4
+            epochs = 100
 
-    epochs = 250 if not pointcloud else 50
-
-    wandb.init(entity="alinaboehm", project="pretrain_valuation", config={"bs": bs, "lr": lr, "epochs": epochs, "pointcloud": pointcloud})
+    wandb.init(entity="alinaboehm", project="pretrain_valuation", config={"bs": bs, "lr": lr, "epochs": epochs, "pointcloud": pointcloud, "task": network_name, "dropout": True})
     furnitre_str = ""
     for item in sorted(furniture):
         furnitre_str += f"{item}_"
-    wandb.run.name = f"fb_{furnitre_str}pc{pointcloud}_{network_name}_bs{bs}_lr{lr}"
+    wandb.run.name = f"final_fb_{furnitre_str}pc{pointcloud}_{network_name}_bs{bs}_lr{lr}_seed{seed}"
     dir_name = "pc" if pointcloud else "mlp"
-    checkpoint_dir = data_path / "checkpoints" / dir_name / furnitre_str / network_name
+    checkpoint_dir = data_path / "checkpoints" / dir_name / furnitre_str / network_name / str(seed)
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    train_loader = DataLoader(train_dataset, batch_size=bs, sampler=train_sampler)
-    test_loader = DataLoader(test_dataset, batch_size=bs, shuffle=False)
-    loss_fn = torch.nn.MSELoss()
+    train_loader = DataLoader(train_dataset, batch_size=bs, generator=torch_rng)
+    test_loader = DataLoader(test_dataset, batch_size=bs, shuffle=False, generator=torch_rng)
+    print(class_sample_count[0]/class_sample_count[1])
+    loss_fn = torch.nn.BCELoss() # np.sqrt(class_sample_count[0]/class_sample_count[1]))
     optimizer = torch.optim.Adam(network.parameters(), lr=lr, weight_decay=1e-4)
 
     print(f"Starting pretraining for {network_name}...")
@@ -567,7 +597,7 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
     wandb.log({"eval_accuracy_pos": acc_pos, "epoch": epoch + 1})
     wandb.log({"eval_accuracy_neg": acc_neg, "epoch": epoch + 1})
 
-    visualize_model_predictions(network, test_loader, num_samples=6, device=device, pc=pointcloud)
+    # visualize_model_predictions(network, test_loader, num_samples=4, device=device, pc=pointcloud)
 
     print(f"Final: Epoch {epoch + 1} | Loss: {avg_loss:.6f}")
     # Save checkpoint
@@ -637,7 +667,7 @@ def eval_only(data_path, network, network_name):
     acc_neg = successes_eval["0"] / num_samples_eval["0"] if num_samples_eval["0"] > 0 else 0
     print(acc_all, acc_pos, acc_neg)
     print(num_samples_eval, num_samples_eval["1"])
-    visualize_model_predictions(network, test_loader, num_samples=10, device=device, pc=pointcloud)
+    # visualize_model_predictions(network, test_loader, num_samples=10, device=device, pc=pointcloud)
 
 def inspect_dataset(file_path, demo_idx=0, num_samples=25):
     # In your inspect_dataset function
@@ -699,7 +729,14 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--pc", action="store_true")
+    parser.add_argument("--seed", type=int, default=0)
     args = parser.parse_args()
+    args.seed = args.seed + 10
+    torch.manual_seed(args.seed)
+    np.random.seed(args.seed)
+    random.seed(args.seed)
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
     pointcloud = args.pc
     task = "is_screwed_in"
     if pointcloud:
@@ -707,8 +744,9 @@ if __name__ == "__main__":
     else:
         network = ValNet(task)
     furniture = ["lamp"]
-    train_single_network(Path("./"), network_name=task, network=network, furniture=furniture, pointcloud=pointcloud)
-
-    state_dict = torch.load("checkpoints/pc/lamp_/is_screwed_in/latest.pt")
-    network.load_state_dict(state_dict)
-    eval_only(Path("./"), network, task)
+    train_single_network(Path("./"), network_name=task, network=network, furniture=furniture, pointcloud=pointcloud, seed=args.seed)
+    
+    # dict_str = "pc" if args.pc else "mlp"
+    # state_dict = torch.load(f"checkpoints/{dict_str}/lamp_/{task}/{args.seed}/latest.pt")
+    # network.load_state_dict(state_dict)
+    # eval_only(Path("./"), network, task)

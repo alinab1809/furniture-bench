@@ -1155,7 +1155,6 @@ class FurnitureSimEnv(gym.Env):
             if k == "parts_poses":
 
                 parts_poses, _ = self._get_parts_poses(sim_coord=True)  # Part poses in AprilTag coordinate.
-                print(parts_poses[:3])
                 if self.np_step_out:
                     parts_poses = parts_poses.cpu().numpy()
                 obs["parts_poses"] = parts_poses

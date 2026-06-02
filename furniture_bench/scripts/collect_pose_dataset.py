@@ -23,13 +23,15 @@ class PoseDataCollector:
             "FurnitureSimFull-v0",
             furniture=furniture,
             num_envs=1,
-            headless=False,
+            headless=True,
             np_step_out=False,
             channel_first=False,  # Set to False to get (H, W, 3) for easy saving
             randonmess=Randomness.MEDIUM,
             record=True
         )
+
         self.data_path = data_path
+        print(data_path)
 
     def get_transformation_matrix(self, pose):
         """Converts [x, y, z, qx, qy, qz, qw] to 4x4 matrix."""
@@ -221,7 +223,7 @@ class PoseDataCollector:
                     #         corner_label = 1
                     #        moved_to_corner = True
                     prev_label = screwed_label
-                    corner_label, _ = unwrapped.furniture.parts[part_idx1].is_object_in_corner(unwrapped.rb_states, unwrapped.part_idxs, unwrapped.sim_to_april_mat, unwrapped.april_to_robot_mat)
+                    corner_label, _, _ = unwrapped.furniture.parts[part_idx1].is_object_in_corner(unwrapped.rb_states, unwrapped.part_idxs, unwrapped.sim_to_april_mat, unwrapped.april_to_robot_mat)
 
                     corner_label_ds.resize((step_idx + 1,))
                     corner_label_ds[step_idx] = corner_label.cpu()
@@ -358,7 +360,7 @@ class PoseDataCollector:
                         #         corner_label = 1
                         #        moved_to_corner = True
                         prev_label = screwed_label
-                        corner_label, _ = unwrapped.furniture.parts[part_idx1].is_object_in_corner(unwrapped.rb_states,
+                        corner_label, _, _ = unwrapped.furniture.parts[part_idx1].is_object_in_corner(unwrapped.rb_states,
                                                                                                    unwrapped.part_idxs,
                                                                                                    unwrapped.sim_to_april_mat,
                                                                                                    unwrapped.april_to_robot_mat)

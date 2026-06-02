@@ -55,7 +55,7 @@ class LampHood(Part):
 
     def reset(self, worker=None):
         super().reset()
-        self.pre_assemble_done = True
+        self.pre_assemble_done = True # TODO: when collecting demos this must be set back to False
         self._state = "move_up"
         self.gripper_action = -1
 
