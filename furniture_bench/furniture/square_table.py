@@ -6,8 +6,8 @@ from furniture_bench.furniture.parts.square_table_top import SquareTableTop
 
 
 class SquareTable(Furniture):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, env_idx=0):
+        super().__init__(env_idx)
         furniture_conf = config["furniture"]["square_table"]
         self.furniture_conf = furniture_conf
 

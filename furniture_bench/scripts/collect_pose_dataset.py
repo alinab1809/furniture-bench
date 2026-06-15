@@ -23,10 +23,10 @@ class PoseDataCollector:
             "FurnitureSimFull-v0",
             furniture=furniture,
             num_envs=1,
-            headless=True,
+            headless=False,
             np_step_out=False,
             channel_first=False,  # Set to False to get (H, W, 3) for easy saving
-            randonmess=Randomness.MEDIUM,
+            randonmess=Randomness.LOW,
             record=True
         )
 

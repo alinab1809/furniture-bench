@@ -5,9 +5,10 @@ from furniture_bench.furniture.parts.table_top import TableTop
 
 
 class SquareTableTop(TableTop):
-    def __init__(self, part_config, part_idx):
-        super().__init__(part_config, part_idx)
+    def __init__(self, part_config, part_idx, env_idx=0):
+        super().__init__(part_config, part_idx, env_idx=env_idx)
         self.half_width = 0.08125
+        self.half_length = self.half_width
         # self.reset_x_len = 0.08125
         self.reset_x_len = 0.1625
         self.reset_y_len = self.reset_x_len

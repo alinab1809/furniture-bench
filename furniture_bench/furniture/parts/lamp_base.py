@@ -64,6 +64,7 @@ class LampBase(Part):
         sim_to_april_mat,
         april_to_robot,
         env_idx=0,
+        rng=None,
         torch_rng=None):
         next_state = self._state
 
@@ -154,6 +155,8 @@ class LampBase(Part):
                 pos_noise=torch.normal(
                     mean=torch.zeros((3,)), std=torch.tensor([0.005, 0.005, 0.0]), generator=torch_rng
                 ).to(device),
+                rng=rng,
+                torch_rng=torch_rng,
             )
             if self.satisfy(
                 ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.5

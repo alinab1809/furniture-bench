@@ -170,7 +170,7 @@ class LampBulb(Leg):
             # target_pos[1] += 0.01
             target = self.add_noise_first_target(
                 C.to_homogeneous(target_pos, target_ori),
-                ori_noise=torch.tensor([0, 0, 0, 1], device=device), torch_rng=torch_rng,
+                ori_noise=torch.tensor([0, 0, 0, 1], device=device), rng=rng, torch_rng=torch_rng,
             )
             if self.satisfy(ee_pose, target, pos_error_threshold=0.02):
                 self.prev_pose = target.clone()
@@ -232,7 +232,7 @@ class LampBulb(Leg):
             )
             target_ori = ee_pose[:3, :3]
             target = self.add_noise_first_target(
-                C.to_homogeneous(target_pos, target_ori), torch_rng=torch_rng
+                C.to_homogeneous(target_pos, target_ori), rng=rng, torch_rng=torch_rng
             )
             if self.satisfy(
                     ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3
@@ -243,7 +243,7 @@ class LampBulb(Leg):
             target_pos = torch.tensor([0.5, 0.10, 0.17], device=device)
             target_ori = self.prev_pose[:3, :3]
             target = self.add_noise_first_target(
-                C.to_homogeneous(target_pos, target_ori), torch_rng=torch_rng
+                C.to_homogeneous(target_pos, target_ori), rng=rng, torch_rng=torch_rng
             )
             if self.satisfy(
                     ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3
@@ -255,7 +255,7 @@ class LampBulb(Leg):
             target_ori = (rot_mat_tensor(np.pi, 0, 0, device))[:3, :3]
             target_pos = torch.tensor([0.57, 0.10, 0.17], device=device)
             target = self.add_noise_first_target(
-                C.to_homogeneous(target_pos, target_ori)
+                C.to_homogeneous(target_pos, target_ori), rng=rng, torch_rng=torch_rng
             )
             if self.satisfy(
                     ee_pose, target, pos_error_threshold=0.02, ori_error_threshold=0.3, max_len=30
@@ -314,8 +314,8 @@ class LampBulb(Leg):
             target = rel @ ee_pose
             target[2] += 0.03  # Margin.
 
-            is_inserted, pos_error = self.is_inserted(rb_states, (part_idxs[assemble_to][env_idx],
-                                                                part_idxs[self.name][env_idx]), sim_to_april_mat)
+            # is_inserted, pos_error = self.is_inserted(rb_states, (part_idxs[assemble_to][env_idx],
+            #                                                     part_idxs[self.name][env_idx]), sim_to_april_mat)
             self.prev_pose = target
             # if is_inserted:
             #     next_state = "release"
@@ -357,7 +357,9 @@ class LampBulb(Leg):
         sim_to_april_mat,
         april_to_robot,
         assemble_to,
-        env_idx=0):
+        env_idx=0,
+        rng=None,
+        torch_rng=None):
         def rot_mat_tensor(x, y, z, device):
             return torch.tensor(rot_mat([x, y, z], hom=True), device=device).float()
 

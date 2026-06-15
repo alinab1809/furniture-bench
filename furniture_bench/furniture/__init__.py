@@ -12,11 +12,11 @@ from furniture_bench.furniture.lamp import Lamp
 
 def furniture_factory(furniture: str, env_idx=0) -> Furniture:
     if furniture == "square_table":
-        return SquareTable()
+        return SquareTable(env_idx)
     elif furniture == "desk":
         return Desk()
     elif furniture == "round_table":
-        return RoundTable()
+        return RoundTable(env_idx)
     elif furniture == "drawer":
         return Drawer()
     elif furniture == "chair":
@@ -28,6 +28,6 @@ def furniture_factory(furniture: str, env_idx=0) -> Furniture:
     elif furniture == "stool":
         return Stool()
     elif furniture == "one_leg":
-        return OneLeg()
+        return OneLeg(env_idx)
     else:
         raise ValueError(f"Unknown furniture type: {furniture}")
