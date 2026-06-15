@@ -54,11 +54,11 @@ class Part(ABC):
     def randomize_init_pose(self, from_skill=0, pos_range=[-0.05, 0.05], rot_range=45):
         self.reset_pos[from_skill][:2] = self.part_config["reset_pos"][from_skill][
             :2
-        ] + np.random.uniform( # self.rng.uniform(
+        ] + self.rng.uniform(
             pos_range[0], pos_range[1], size=2
         )  # x, y
         self.mut_ori = rot_mat(
-            [0, 0, np.random.uniform(np.radians(-rot_range), np.radians(rot_range))], # self.rng.uniform(np.radians(-rot_range), np.radians(rot_range))],
+            [0, 0, self.rng.uniform(np.radians(-rot_range), np.radians(rot_range))],
             hom=True,
         )
         self.reset_ori[from_skill] = (
