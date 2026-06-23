@@ -10,7 +10,7 @@ from torch.utils.data import Dataset, DataLoader, WeightedRandomSampler, random_
 import h5py
 import trimesh
 from scipy.spatial.transform import Rotation as R
-
+from sklearn.metrics import f1_score
 import os
 import numpy as np
 
@@ -559,6 +559,7 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
     loss_eval = 0
     successes_eval = {"all": 0, "1": 0, "0": 0}
     num_samples_eval = {"all": 0, "1": 0, "0": 0}
+    tp, fp, fn = 0, 0, 0
     for batch in test_loader:
         with torch.no_grad():
             x = batch["x"].to(device)
@@ -587,7 +588,15 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
             if num_neg > 0:
                 successes_eval["0"] += (preds[neg_mask] == targets[neg_mask]).sum().item()
                 num_samples_eval["0"] += num_neg
+            tp += ((preds == 1) & (targets == 1)).sum().item()
+            fp += ((preds == 1) & (targets == 0)).sum().item()
+            fn += ((preds == 0) & (targets == 1)).sum().item()
+    
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
 
+    wandb.log({"eval_f1": f1_score, "epoch": epoch + 1})
     acc_all = successes_eval["all"] / num_samples_eval["all"] if num_samples_eval["all"] > 0 else 0
     acc_pos = successes_eval["1"] / num_samples_eval["1"] if num_samples_eval["1"] > 0 else 0
     acc_neg = successes_eval["0"] / num_samples_eval["0"] if num_samples_eval["0"] > 0 else 0
@@ -609,10 +618,13 @@ def train_single_network(data_path, network_name, network, furniture, pointcloud
     wandb.finish()
     shutil.rmtree("wandb/")
 
-def eval_only(data_path, network, network_name):
-    torch.manual_seed(42)
-    np.random.seed(42)
-    random.seed(42)
+def eval_only(data_path, network, network_name, seed=0, pointcloud=True):
+    wandb.init(entity="alinaboehm", project="pretrain_valuation", config={"pointcloud": pointcloud, "dropout": True})
+    furnitre_str = ""
+    for item in sorted(furniture):
+        furnitre_str += f"{item}_"
+    wandb.run.name = f"final_fb_{furnitre_str}pc{pointcloud}_{network_name}seed{seed}"
+
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     network.to(device)
@@ -625,15 +637,17 @@ def eval_only(data_path, network, network_name):
 
     train_size = int(0.8 * len(dataset))
     test_size = len(dataset) - train_size
-    generator = torch.Generator().manual_seed(42)  # for reproducibility
+    generator = torch.Generator().manual_seed(seed)  # for reproducibility
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size], generator=generator)
     bs = 128
 
     test_loader = DataLoader(test_dataset, batch_size=bs, shuffle=False)
     network.eval()
-    loss_eval = 0
     successes_eval = {"all": 0, "1": 0, "0": 0}
     num_samples_eval = {"all": 0, "1": 0, "0": 0}
+    loss_fn = torch.nn.BCELoss()
+    tp, fp, fn = 0, 0, 0
+    loss_eval = 0
     for batch in test_loader:
         with torch.no_grad():
             x = batch["x"].to(device)
@@ -641,6 +655,7 @@ def eval_only(data_path, network, network_name):
 
             # Forward
             out = network(x)
+            loss_eval += loss_fn(out, y)
 
             preds = out > 0.5
             targets = y > 0.5
@@ -661,12 +676,24 @@ def eval_only(data_path, network, network_name):
             if num_neg > 0:
                 successes_eval["0"] += (preds[neg_mask] == targets[neg_mask]).sum().item()
                 num_samples_eval["0"] += num_neg
+            tp += ((preds == 1) & (targets == 1)).sum().item()
+            fp += ((preds == 1) & (targets == 0)).sum().item()
+            fn += ((preds == 0) & (targets == 1)).sum().item()
+
+    precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+    recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+    f1_score = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
+
+    wandb.log({"eval_f1": f1_score})
 
     acc_all = successes_eval["all"] / num_samples_eval["all"] if num_samples_eval["all"] > 0 else 0
     acc_pos = successes_eval["1"] / num_samples_eval["1"] if num_samples_eval["1"] > 0 else 0
     acc_neg = successes_eval["0"] / num_samples_eval["0"] if num_samples_eval["0"] > 0 else 0
-    print(acc_all, acc_pos, acc_neg)
-    print(num_samples_eval, num_samples_eval["1"])
+    avg_loss = loss_eval / len(test_loader)
+    wandb.log({"eval_loss": avg_loss})
+    wandb.log({"eval_accuracy": acc_all})
+    wandb.log({"eval_accuracy_pos": acc_pos})
+    wandb.log({"eval_accuracy_neg": acc_neg})
     # visualize_model_predictions(network, test_loader, num_samples=10, device=device, pc=pointcloud)
 
 def inspect_dataset(file_path, demo_idx=0, num_samples=25):
@@ -738,15 +765,15 @@ if __name__ == "__main__":
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
     pointcloud = args.pc
-    task = "is_screwed_in"
+    task = "is_in_corner"
     if pointcloud:
         network = PointNet()
     else:
         network = ValNet(task)
     furniture = ["lamp"]
-    train_single_network(Path("./"), network_name=task, network=network, furniture=furniture, pointcloud=pointcloud, seed=args.seed)
+    # train_single_network(Path("./"), network_name=task, network=network, furniture=furniture, pointcloud=pointcloud, seed=args.seed)
     
-    # dict_str = "pc" if args.pc else "mlp"
-    # state_dict = torch.load(f"checkpoints/{dict_str}/lamp_/{task}/{args.seed}/latest.pt")
-    # network.load_state_dict(state_dict)
-    # eval_only(Path("./"), network, task)
+    dict_str = "pc" if args.pc else "mlp"
+    state_dict = torch.load(f"checkpoints/{dict_str}/lamp_/{task}/{args.seed}/latest.pt")
+    network.load_state_dict(state_dict)
+    eval_only(Path("./"), network, task, seed=args.seed, pointcloud=pointcloud)
