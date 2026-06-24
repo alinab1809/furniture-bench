@@ -138,7 +138,7 @@ class LampHood(Part):
             target = self.prev_pose
             self.gripper_action = 1
             if self.gripper_less(
-                gripper_width, self.hood_grip_width + 0.001, cnt_max=40
+                gripper_width, self.hood_grip_width + 0.001, cnt_max=45
             ):
                 self.prev_pose = target
                 next_state = "lift_up_hood"

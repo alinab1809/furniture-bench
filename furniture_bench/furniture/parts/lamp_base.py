@@ -164,8 +164,16 @@ class LampBase(Part):
                 self.prev_pose = target
                 # self.gripper_action = -1
                 next_state = "wait"
-        else:
+        elif self._state == "wait":
             target = ee_pose
+            impossible_target = torch.zeros_like(target)
+            if self.satisfy(ee_pose, impossible_target, max_len=20):
+                self.prev_pose = target
+                self.gripper_action = -1
+                next_state = "release"
+        elif self._state == "release":
+            target = self.prev_pose
+            self.gripper_action = -1
 
         skill_complete = self.may_transit_state(next_state)
 
